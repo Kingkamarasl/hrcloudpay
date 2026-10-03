@@ -299,7 +299,16 @@ STATIC_URL = '/static/'
 # frontend/vite.config.js: build.outDir). Django serves the built JS/CSS
 # from there as static files, and hrcloudpay/views.py serves the built
 # index.html for '/' and any other non-API route (SPA client-side routing).
-STATICFILES_DIRS = [BASE_DIR / 'frontend_dist']
+#
+# Only when that directory exists. Under the Vercel Services deployment the
+# frontend service owns the SPA and emits frontend/dist instead, so
+# backend/frontend_dist is never created - and listing a missing directory
+# makes every `manage.py check` and `collectstatic` emit staticfiles.W004.
+# Django's own admin CSS does not depend on this entry (WHITENOISE_USE_FINDERS
+# below resolves contrib.static through the finders), so /admin still styles
+# correctly on Vercel.
+_FRONTEND_DIST = BASE_DIR / 'frontend_dist'
+STATICFILES_DIRS = [d for d in (_FRONTEND_DIST,) if d.is_dir()]
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # Lets WhiteNoise serve straight from STATICFILES_DIRS without requiring

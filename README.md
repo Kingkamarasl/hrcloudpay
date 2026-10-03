@@ -214,12 +214,53 @@ Before going live:
   something like `gunicorn hrcloudpay.wsgi`
 
 **Deploy the frontend and backend as one origin.** The earlier advice to split
-them (frontend on Vercel/Netlify, backend on a VM, with `VITE_API_URL` set at
-build time) is wrong for this application. The session cookie is `HttpOnly` and
-scoped to the API origin, so putting the SPA on a different origin forces
-`SameSite=None; Secure` on it. That disables the browser's automatic CSRF
-protection and makes every API call a CORS preflight. Serving both from Django
-keeps the cookie `SameSite=Lax` and the CSRF defence intact.
+them across two *domains* (frontend on Vercel/Netlify, backend on a VM, with
+`VITE_API_URL` set at build time) is wrong for this application. The session
+cookie is `HttpOnly` and scoped to the API origin, so putting the SPA on a
+different domain forces `SameSite=None; Secure` on it. That disables the
+browser's automatic CSRF protection and makes every API call a CORS preflight.
+Serving both from Django keeps the cookie `SameSite=Lax` and the CSRF defence
+intact.
+
+Note that this rules out two *domains*, not two *services*. `vercel.json`
+declares Vercel Services — a Django service and a Vite service behind a single
+routing table on **one domain**, with `/api`, `/site-icon/`, `/admin/`,
+`/static/` and `/media/` rewritten to Django and everything else to the SPA.
+The browser still sees one origin, so the cookie and CSRF reasoning above
+holds unchanged and `VITE_API_URL` stays unset. What Services changes is who
+builds and serves the assets, not where the browser thinks it is.
+
+### Deploying to Vercel
+
+1. Set the project's framework to **Services** in Build and Deployment
+   settings. Both conditions are required — the framework setting *and* a
+   `services` key in `vercel.json` — otherwise Vercel silently ignores the
+   services block and builds the repo as a single app.
+2. Add the environment variables from `.env.example`. `DATABASE_URL`,
+   `SECRET_KEY`, `REDIS_URL`, `ALLOWED_HOSTS` and the `AWS_*` media variables
+   are all required; each fails in a way that is easy to misread (SQLite, or
+   per-worker rate limits, or files that vanish on redeploy).
+3. Deploy. The frontend service builds with
+   `npm run build -- --outDir dist --base /`, which puts assets under
+   `/assets/` instead of the `/static/` that Django serves in single-server
+   mode. Do not change `vite.config.js` — the default build is what the Docker
+   and local single-server paths depend on.
+4. Run the release order (`migrate`, then the two seeds, then
+   `collectstatic`) as a separate step. Vercel does not run these, and putting
+   them in a build command would race across concurrent and preview builds.
+
+Two things do not work on the Vercel Python runtime, because it is not a
+container:
+
+- **OCR.** `pytesseract` needs a `tesseract` binary, which is a `apt-get` line
+  in the Dockerfile and does not exist on Vercel. Scanned PDFs will fail to
+  extract text until the service is switched to `runtime: "container"`.
+- **Request duration.** PDF generation and document ingestion run inside a
+  serverless function with a hard wall-clock limit. Large payslip runs and bulk
+  ingestion can hit it. `runtime: "container"` removes the limit.
+
+Setting `"runtime": "container"` on the backend service deploys the existing
+Dockerfile instead, which resolves both, at the cost of a slower cold start.
 
 Uploaded files are served by `hrcloudpay.views.serve_media` in every environment,
 not only under `DEBUG`. Under the old DEBUG-only `static()` route, production
@@ -248,6 +289,12 @@ python manage.py collectstatic --noinput
 python manage.py check --deploy               # 5. reports regional.W001 if step 3 was skipped
 gunicorn hrcloudpay.wsgi
 ```
+
+Steps 2–5 run against the *deployed* database, so `DATABASE_URL` must point at
+it. They deliberately do not run inside `Dockerfile`: that build stage has no
+`DATABASE_URL`, so `migrate` would quietly build a throwaway SQLite file in the
+image while the running container talks to Postgres — a step that looks handled
+and migrates nothing.
 
 **Why step 3 is not optional.** The statutory rates for the original country
 packs are written by `seed_country_rules`, not by a migration, so `migrate`

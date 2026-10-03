@@ -1,5 +1,5 @@
-# HRCloudPay — Production Dockerfile
-# Multi-stage build: frontend → backend
+# HRCloudPay - Production Dockerfile
+# Multi-stage build: frontend -> backend
 
 # Stage 1: Build frontend
 FROM node:20-alpine AS frontend-builder
@@ -34,10 +34,19 @@ COPY --from=frontend-builder /app/frontend/dist/ ./frontend_dist/
 # Collect static files
 RUN python manage.py collectstatic --noinput
 
-# Run migrations + seed data
-RUN python manage.py migrate --noinput && \
-    python manage.py seed_country_rules && \
-    python manage.py seed_filing_rules
+# Migrations and seeds deliberately do NOT run here.
+#
+# This stage has no DATABASE_URL, so settings.py falls back to SQLite and
+# `migrate` would build a throwaway db.sqlite3 inside the image. The deployed
+# container sets DATABASE_URL to Postgres, so those migrations never reached the
+# real database - the step looked handled while silently doing nothing, and an
+# operator had no reason to run it for real.
+#
+# Apply them as a release step against the production database instead:
+#   python manage.py migrate --noinput
+#   python manage.py seed_country_rules     # not optional - see README
+#   python manage.py seed_filing_rules
+# See the "Release order" section of README.md.
 
 EXPOSE 8000
 
