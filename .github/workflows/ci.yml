@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: hrcloudpay_test
+          POSTGRES_USER: hrcloudpay
+          POSTGRES_PASSWORD: test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+
+      - name: Run Django checks
+        run: |
+          cd backend
+          python manage.py check
+        env:
+          DATABASE_URL: postgres://hrcloudpay:test_password@localhost:5432/hrcloudpay_test
+          REDIS_URL: redis://localhost:6379/0
+          SECRET_KEY: ci-test-secret-key
+          DEBUG: 'False'
+
+      - name: Run migrations
+        run: |
+          cd backend
+          python manage.py migrate --noinput
+        env:
+          DATABASE_URL: postgres://hrcloudpay:test_password@localhost:5432/hrcloudpay_test
+          REDIS_URL: redis://localhost:6379/0
+          SECRET_KEY: ci-test-secret-key
+          DEBUG: 'False'
+
+      - name: Run tests
+        run: |
+          cd backend
+          python manage.py test --verbosity=2
+        env:
+          DATABASE_URL: postgres://hrcloudpay:test_password@localhost:5432/hrcloudpay_test
+          REDIS_URL: redis://localhost:6379/0
+          SECRET_KEY: ci-test-secret-key
+          DEBUG: 'False'
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Build
+        run: |
+          cd frontend
+          npm run build
+
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install security tools
+        run: |
+          pip install bandit safety
+
+      - name: Run Bandit
+        run: |
+          cd backend
+          bandit -r . -f json -o bandit-report.json || true
+          bandit -r .
+
+      - name: Run Safety check
+        run: |
+          cd backend
+          safety check --json --output safety-report.json || true
+          safety check

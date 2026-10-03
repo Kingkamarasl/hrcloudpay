@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HRCloudPay — People, Payroll &amp; AI HR Operations</title>
+    <meta name="description" content="HRCloudPay brings payroll, employee 360°, HR documents, compliance, and an AI HR assistant into one secure workspace." />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!--
+      Both icons point at fixed paths served by Django, not at files bundled here.
+      A platform administrator can therefore replace the site icon from the
+      console and it takes effect on the next page load, with no frontend rebuild
+      and no redeploy. These routes answer 204 until something is uploaded, which
+      browsers treat as "no icon" rather than an error.
+    -->
+    <link rel="icon" type="image/png" href="/site-icon/favicon.png">
+    <link rel="apple-touch-icon" href="/site-icon/apple-touch-icon.png">
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

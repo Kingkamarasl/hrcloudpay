@@ -1,0 +1,79 @@
+{% extends "admin/base.html" %}
+{% load i18n %}
+
+{% block title %}HRCloudPay Admin{% endblock %}
+
+{% block content %}
+<div class="hc-admin-dashboard">
+  <div class="hc-hero">
+    <div>
+      <div class="hc-eyebrow">HRCloudPay · Internal Operations</div>
+      <h1>Developer Admin</h1>
+      <p>Application-level control room for tenants, HR data, payroll, billing and platform governance.</p>
+    </div>
+    <div class="hc-hero-meta">
+      <span class="hc-dot"></span>
+      {{ hc_now|date:"M j, Y · H:i" }} UTC
+    </div>
+  </div>
+
+  <div class="hc-grid hc-kpis">
+    <div class="hc-card"><span>Companies</span><strong>{{ hc_companies }}</strong><small>{{ hc_active_companies }} active</small></div>
+    <div class="hc-card"><span>Employees</span><strong>{{ hc_employees }}</strong><small>Across all tenants</small></div>
+    <div class="hc-card"><span>Users</span><strong>{{ hc_users }}</strong><small>Application accounts</small></div>
+    <div class="hc-card"><span>Subscriptions</span><strong>{{ hc_active_subscriptions }}</strong><small>Trial / active / grace</small></div>
+    <div class="hc-card"><span>MRR</span><strong>{{ hc_mrr|floatformat:2 }}</strong><small>Configured monthly value</small></div>
+    <div class="hc-card"><span>Open Support</span><strong>{{ hc_open_tickets }}</strong><small>Needs attention</small></div>
+  </div>
+
+  <div class="hc-grid hc-secondary">
+    <div class="hc-panel">
+      <div class="hc-panel-head"><h2>System snapshot</h2><span>Live database metrics</span></div>
+      <div class="hc-stat-row"><span>Payroll-ready companies</span><strong>{{ hc_payroll_ready }} / {{ hc_companies }}</strong></div>
+      <div class="hc-stat-row"><span>Total payroll runs</span><strong>{{ hc_payroll_runs }}</strong></div>
+      <div class="hc-stat-row"><span>Today's attendance records</span><strong>{{ hc_today_attendance }}</strong></div>
+      <div class="hc-stat-row"><span>Open support tickets</span><strong>{{ hc_open_tickets }}</strong></div>
+    </div>
+
+    <div class="hc-panel">
+      <div class="hc-panel-head"><h2>Recent payments</h2><a href="{% url 'admin:accounts_paymenttransaction_changelist' %}">View all</a></div>
+      {% for tx in hc_recent_transactions %}
+        <div class="hc-list-row"><div><strong>{{ tx.company }}</strong><small>{{ tx.provider }} · {{ tx.status }}</small></div><strong>{{ tx.amount }} {{ tx.currency }}</strong></div>
+      {% empty %}<div class="hc-empty">No payment transactions yet.</div>{% endfor %}
+    </div>
+  </div>
+
+  <div class="hc-panel hc-audit">
+    <div class="hc-panel-head"><h2>Recent audit activity</h2><a href="{% url 'admin:accounts_auditlog_changelist' %}">Open audit log</a></div>
+    <div class="hc-table-wrap">
+      <table>
+        <thead><tr><th>Time</th><th>Action</th><th>Company</th><th>Actor</th><th>Message</th></tr></thead>
+        <tbody>
+        {% for audit in hc_recent_audits %}
+          <tr><td>{{ audit.created_at|date:"M j, H:i" }}</td><td><span class="hc-pill">{{ audit.get_action_display }}</span></td><td>{{ audit.company|default:"—" }}</td><td>{{ audit.actor|default:"System" }}</td><td>{{ audit.message }}</td></tr>
+        {% empty %}<tr><td colspan="5">No audit events yet.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<style>
+.hc-admin-dashboard{max-width:1500px;margin:0 auto;padding:8px 4px 36px}
+.hc-hero{display:flex;justify-content:space-between;gap:24px;align-items:flex-end;padding:8px 0 28px}
+.hc-eyebrow{font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;opacity:.62;margin-bottom:8px}
+.hc-hero h1{font-size:32px;line-height:1.1;margin:0 0 8px;font-weight:750}
+.hc-hero p{margin:0;opacity:.68;max-width:720px}
+.hc-hero-meta{font-size:12px;opacity:.65;white-space:nowrap}.hc-dot{display:inline-block;width:8px;height:8px;border-radius:999px;background:#16a34a;margin-right:7px}
+.hc-grid{display:grid;gap:14px}.hc-kpis{grid-template-columns:repeat(6,minmax(0,1fr))}
+.hc-secondary{grid-template-columns:1fr 1.35fr;margin-top:14px}.hc-card,.hc-panel{border:1px solid rgba(127,127,127,.18);border-radius:12px;background:rgba(255,255,255,.72);box-shadow:0 4px 20px rgba(0,0,0,.035)}
+.hc-card{padding:18px;min-height:118px}.hc-card span{display:block;font-size:12px;font-weight:650;opacity:.58}.hc-card strong{display:block;font-size:27px;margin:10px 0 4px}.hc-card small{opacity:.55;font-size:11px}
+.hc-panel{padding:20px}.hc-panel-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:14px}.hc-panel-head h2{font-size:16px;margin:0}.hc-panel-head span,.hc-panel-head a{font-size:12px;opacity:.58}.hc-panel-head a{text-decoration:none}
+.hc-stat-row{display:flex;justify-content:space-between;padding:13px 0;border-bottom:1px solid rgba(127,127,127,.12);font-size:13px}.hc-stat-row:last-child{border-bottom:0}.hc-stat-row strong{font-weight:700}
+.hc-list-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid rgba(127,127,127,.12);font-size:13px}.hc-list-row:last-child{border-bottom:0}.hc-list-row small{display:block;opacity:.55;margin-top:3px}.hc-empty{padding:20px 0;opacity:.55;font-size:13px}
+.hc-audit{margin-top:14px}.hc-table-wrap{overflow:auto}.hc-table-wrap table{width:100%;border-collapse:collapse;font-size:12px}.hc-table-wrap th,.hc-table-wrap td{text-align:left;padding:11px 10px;border-bottom:1px solid rgba(127,127,127,.12);white-space:nowrap}.hc-table-wrap th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;opacity:.55}.hc-table-wrap td:last-child{white-space:normal}.hc-pill{padding:4px 8px;border-radius:999px;background:rgba(59,130,246,.10);font-size:10px;font-weight:700}
+@media (prefers-color-scheme:dark){.hc-card,.hc-panel{background:rgba(30,30,30,.72);box-shadow:none}}
+@media (max-width:1100px){.hc-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.hc-secondary{grid-template-columns:1fr}}
+@media (max-width:640px){.hc-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.hc-hero{display:block}.hc-hero-meta{margin-top:15px}.hc-card{min-height:105px;padding:14px}}
+</style>
+{% endblock %}
