@@ -61,6 +61,11 @@ class AttendanceTestCase(TestCase):
         self.client = APIClient()
         self.authenticate(self.hr)
 
+        # Clock actions are the only attendance behaviour that depends on the
+        # current date, so the fixtures give them a stable one.
+        self.today = timezone.localdate()
+        self.today_minus_one = self.today - timedelta(days=1)
+
     def make_employee(self, company, code, first, last, department='Sales'):
         return Employee.objects.create(
             company=company, employee_code=code,

@@ -153,7 +153,13 @@ class CanManageHROrDepartment(BasePermission):
       each role actually sees.
     """
 
-    def _employee_in_scope(self, request, employee):
+    def employee_in_scope(self, request, employee):
+        """Whether this user may write attendance for `employee`.
+
+        Public because the clock-in action needs the same answer and the rules
+        must not exist twice - a second copy of a permission check is a
+        permission check that eventually disagrees with the first.
+        """
         user = request.user
         if user.role in ('owner', 'admin', 'hr'):
             return True
@@ -180,13 +186,13 @@ class CanManageHROrDepartment(BasePermission):
                 employee = Employee.objects.get(id=employee_id, company=user.company)
             except Employee.DoesNotExist:
                 return False
-            return self._employee_in_scope(request, employee)
+            return self.employee_in_scope(request, employee)
         return False
 
     def has_object_permission(self, request, view, obj):
         if request.method in SAFE_METHODS:
             return True
-        return self._employee_in_scope(request, obj.employee)
+        return self.employee_in_scope(request, obj.employee)
 
 
 class CanApproveForDepartment(BasePermission):
