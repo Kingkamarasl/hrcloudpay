@@ -1,11 +1,14 @@
-from rest_framework import viewsets
+from django.db.models import Q
+
+from rest_framework import serializers, viewsets
 
 from accounts.permissions import CanManageHROrDepartment, IsCompanyActive, IsCompanyMember
 from accounts.audit import audit, changed_fields, snapshot_fields
-from employees.models import Employee
 
 from .models import Attendance
 from .serializers import AttendanceSerializer
+
+TRACKED = ['date', 'check_in', 'check_out', 'crossed_midnight', 'status', 'notes']
 
 
 class AttendanceViewSet(viewsets.ModelViewSet):
@@ -13,25 +16,77 @@ class AttendanceViewSet(viewsets.ModelViewSet):
     permission_classes = [IsCompanyMember, IsCompanyActive, CanManageHROrDepartment]
 
     def get_queryset(self):
-        qs = Attendance.objects.filter(employee__company=self.request.user.company)
+        """Company-scoped always, then narrowed by role. Deny by default.
+
+        The employee branch used to be guarded by `hasattr(user,
+        'employee_profile')`, which is False for an account with no linked
+        Employee row. That made the whole branch - including its queryset
+        filter - disappear, so such an account fell through to the unfiltered
+        company queryset and saw every attendance record in the tenant. Writes
+        were still blocked by CanManageHROrDepartment, which is why this was a
+        read leak and not a write one.
+
+        Now an employee with no profile matches nothing. An unlinked account is
+        a provisioning mistake, and the safe reading of it is "no records",
+        never "all records".
+        """
         user = self.request.user
+        qs = Attendance.objects.filter(employee__company=user.company)
+
+        if user.role == 'employee':
+            profile_id = user.employee_id
+            return qs.filter(employee_id=profile_id) if profile_id else qs.none()
+
+        if user.role == 'department_manager':
+            if not user.managed_department:
+                return qs.none()
+            return qs.filter(employee__department=user.managed_department)
+
         employee_id = self.request.query_params.get('employee')
         if employee_id:
             qs = qs.filter(employee_id=employee_id)
-        # Row-level visibility by role
-        if user.role == 'employee' and hasattr(user, 'employee_profile'):
-            qs = qs.filter(employee=user.employee_profile)
-        elif user.role == 'department_manager':
-            qs = qs.filter(employee__department=user.managed_department)
+
+        start = self.request.query_params.get('start')
+        end = self.request.query_params.get('end')
+        if start:
+            qs = qs.filter(date__gte=start)
+        if end:
+            qs = qs.filter(date__lte=end)
+
         return qs
 
     def perform_create(self, serializer):
-        employee=Employee.objects.get(id=serializer.validated_data['employee'].id, company=self.request.user.company)
-        obj=serializer.save(employee=employee)
-        audit(self.request.user, 'create', f'Recorded attendance for {employee.full_name}', employee.company, 'attendance', obj.id, {'date': str(obj.date), 'status': obj.status}, request=self.request)
+        # The employee is validated against the caller's company in the
+        # serializer, so there is nothing left to look up here. The previous
+        # unguarded Employee.objects.get() was what turned a cross-tenant id
+        # into a 500.
+        obj = serializer.save()
+        audit(
+            self.request.user, 'create',
+            f'Recorded attendance for {obj.employee.full_name}',
+            obj.employee.company, 'attendance', obj.id,
+            {'date': str(obj.date), 'status': obj.status},
+            request=self.request,
+        )
 
     def perform_update(self, serializer):
-        instance=self.get_object(); before=snapshot_fields(instance, ['date','check_in','check_out','status','notes']); obj=serializer.save(); changes=changed_fields(obj, ['date','check_in','check_out','status','notes'], before=before); audit(self.request.user, 'update', f'Updated attendance for {obj.employee.full_name}', obj.employee.company, 'attendance', obj.id, {'changes':changes}, request=self.request)
-    def perform_destroy(self, instance):
-        audit(self.request.user, 'delete', f'Deleted attendance for {instance.employee.full_name}', instance.employee.company, 'attendance', instance.id, {'date':str(instance.date)}, request=self.request); instance.delete()
+        before = snapshot_fields(serializer.instance, TRACKED)
+        obj = serializer.save()
+        changes = changed_fields(obj, TRACKED, before=before)
+        audit(
+            self.request.user, 'update',
+            f'Updated attendance for {obj.employee.full_name}',
+            obj.employee.company, 'attendance', obj.id,
+            {'changes': changes},
+            request=self.request,
+        )
 
+    def perform_destroy(self, instance):
+        audit(
+            self.request.user, 'delete',
+            f'Deleted attendance for {instance.employee.full_name}',
+            instance.employee.company, 'attendance', instance.id,
+            {'date': str(instance.date)},
+            request=self.request,
+        )
+        instance.delete()
