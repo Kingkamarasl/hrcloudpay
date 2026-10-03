@@ -32,7 +32,15 @@ COPY backend/ ./
 COPY --from=frontend-builder /app/frontend/dist/ ./frontend_dist/
 
 # Collect static files
-RUN python manage.py collectstatic --noinput
+# The rm matters. With no DATABASE_URL set during the build, settings falls back
+# to SQLite and at least one AppConfig.ready() opens a connection, so Django
+# creates db.sqlite3 even though nothing is ever written to it. An image that
+# carries an empty database boots cleanly when DATABASE_URL is missing at
+# runtime, and serves an empty application instead of failing - the one
+# failure mode this image cannot afford.
+RUN SECRET_KEY=v3rc3l-build-time-only-not-a-runtime-key \
+    python manage.py collectstatic --noinput \
+    && rm -f /app/backend/db.sqlite3
 
 # Migrations and seeds deliberately do NOT run here.
 #

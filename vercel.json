@@ -3,7 +3,8 @@
   "services": {
     "backend": {
       "root": "backend/",
-      "entrypoint": "hrcloudpay.wsgi:application"
+      "runtime": "container",
+      "entrypoint": "Dockerfile"
     },
     "frontend": {
       "root": "frontend/",

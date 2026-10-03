@@ -249,18 +249,32 @@ builds and serves the assets, not where the browser thinks it is.
    `collectstatic`) as a separate step. Vercel does not run these, and putting
    them in a build command would race across concurrent and preview builds.
 
-Two things do not work on the Vercel Python runtime, because it is not a
-container:
+The backend runs as a **container**, built from `backend/Dockerfile`. That is
+not a packaging preference, it is required by two features:
 
-- **OCR.** `pytesseract` needs a `tesseract` binary, which is a `apt-get` line
-  in the Dockerfile and does not exist on Vercel. Scanned PDFs will fail to
-  extract text until the service is switched to `runtime: "container"`.
+- **OCR.** `pytesseract` shells out to a `tesseract` binary. Vercel's Python
+  runtime has no system packages, so scanned PDFs would silently extract no
+  text at all. The image installs `tesseract-ocr`.
 - **Request duration.** PDF generation and document ingestion run inside a
-  serverless function with a hard wall-clock limit. Large payslip runs and bulk
-  ingestion can hit it. `runtime: "container"` removes the limit.
+  function with a hard wall-clock limit, which a large payslip run or a bulk
+  ingestion job can exceed.
 
-Setting `"runtime": "container"` on the backend service deploys the existing
-Dockerfile instead, which resolves both, at the cost of a slower cold start.
+The trade is a slower cold start. Going back to the Python runtime means
+replacing the `runtime` key with a WSGI `entrypoint` of
+`hrcloudpay.wsgi:application`, and it costs both features above.
+
+Two things about the container are easy to get wrong:
+
+- Its build context is `backend/`, not the repository root, so paths inside
+  `backend/Dockerfile` are relative to `backend/` and that directory carries
+  its own `.dockerignore`. A `COPY backend/...` line in that file resolves to
+  `backend/backend/...` and fails the build.
+- It builds the backend only. The root `Dockerfile` still builds frontend and
+  backend into one image served entirely by Django, which is the right shape
+  for a container host or a VM and is what `docker-compose` uses. The two
+  coexist because they deploy different things: on Vercel the Vite service has
+  already built and is already serving the SPA, so building it again into the
+  backend image would add some fifty chunks that image never serves.
 
 Uploaded files are served by `hrcloudpay.views.serve_media` in every environment,
 not only under `DEBUG`. Under the old DEBUG-only `static()` route, production
