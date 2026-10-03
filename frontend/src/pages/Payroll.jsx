@@ -4,6 +4,7 @@ import { api, downloadFile } from '../api/client';
 import { withStepUp } from '../api/stepUp';
 import Icon from '../components/Icon';
 import { useFeatures } from '../context/FeatureContext';
+import { money, sumMoney } from '../utils/money';
 
 function saveBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
@@ -15,8 +16,6 @@ function saveBlob(blob, filename) {
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-
-const money = (v) => Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export default function Payroll() {
   const { isEnabled } = useFeatures();
@@ -51,7 +50,7 @@ export default function Payroll() {
       runs: runs.length,
       active: runs.filter((r) => r.status === 'processed' || r.status === 'approved').length,
       paid: runs.filter((r) => r.status === 'paid').length,
-      net: slips.reduce((s, p) => s + Number(p.net_salary || 0), 0),
+      net: sumMoney(slips, ['net_salary']),
     };
   }, [runs]);
 
@@ -263,7 +262,7 @@ export default function Payroll() {
         <div className="payroll-list">
           {loading ? <div className="empty-state"><strong>Loading payroll history…</strong></div> : runs.map((run) => {
             const slips = run.payslips || [];
-            const totals = slips.reduce((a, p) => ({ gross: a.gross + Number(p.gross_salary || 0), tax: a.tax + Number(p.tax_amount || 0), net: a.net + Number(p.net_salary || 0) }), { gross: 0, tax: 0, net: 0 });
+            const totals = { gross: sumMoney(slips, ['gross_salary']), tax: sumMoney(slips, ['tax_amount']), net: sumMoney(slips, ['net_salary']) };
             return (
               <article className="payroll-run" key={run.id}>
                 <div className="payroll-run-main">
