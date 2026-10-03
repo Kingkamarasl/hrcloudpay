@@ -47,6 +47,26 @@ def upload(name='icon.png', size=(64, 64), image_format='PNG', content_type='ima
     return SimpleUploadedFile(name, buffer.getvalue(), content_type=content_type)
 
 
+def branding_row():
+    """The single SiteBranding row, read the way production reads it.
+
+    These tests called ``branding_row()``. That method comes from
+    django-solo, which this project never installed, and ``SiteBranding`` is a
+    plain ``models.Model`` - so the call raised AttributeError and every test
+    using it died in its own setup, before reaching the behaviour it exists to
+    check.
+
+    That left the favicon upload path with no coverage at all, including the
+    defences that matter: a polyglot stored on disk never reaching a visitor,
+    bytes re-encoded rather than the stored file served back, a stale record
+    returning 204, and the ETag changing when the icon changes. Production goes
+    through ``get_or_create(pk=1)`` (accounts/platform.py), so the tests now use
+    that same path instead of inventing a second one.
+    """
+    branding, _created = SiteBranding.objects.get_or_create(pk=1)
+    return branding
+
+
 def store_icon(field='favicon', name='icon.png', size=(64, 64)):
     """Put an icon on the singleton the way a request would.
 
@@ -57,7 +77,7 @@ def store_icon(field='favicon', name='icon.png', size=(64, 64)):
     """
     from django.core.files.base import ContentFile
 
-    branding = SiteBranding.get_solo()
+    branding = branding_row()
     getattr(branding, field).save(
         name, ContentFile(upload(size=size).read()), save=False
     )
@@ -200,7 +220,7 @@ class SiteIconRoutesTests(TestCase):
 
         payload = b'<script>alert(document.cookie)</script>'
         original = png_bytes((32, 32))
-        branding = SiteBranding.get_solo()
+        branding = branding_row()
         branding.favicon.save('poly.png', ContentFile(original + payload), save=False)
         branding.save()
 
@@ -218,7 +238,7 @@ class SiteIconRoutesTests(TestCase):
         payload = b'/*</script><script>alert(1)</script>*/'
         original = upload(size=(32, 32), image_format='JPEG',
                           content_type='image/jpeg').read()
-        branding = SiteBranding.get_solo()
+        branding = branding_row()
         branding.favicon.save('poly.jpg', ContentFile(original + payload), save=False)
         branding.save()
 
@@ -263,7 +283,7 @@ class SiteIconRoutesTests(TestCase):
         self.assertEqual(response.status_code, 204)
 
     def test_a_stored_file_that_is_no_longer_a_valid_image_serves_204(self):
-        branding = SiteBranding.get_solo()
+        branding = branding_row()
         branding.favicon = 'site_icons/not-an-image.png'
         branding.save()
         # Write junk over the stored object, bypassing the upload validation.

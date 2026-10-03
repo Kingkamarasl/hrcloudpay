@@ -2,7 +2,7 @@ import csv
 from datetime import date
 from decimal import Decimal
 
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import Sum, Count
 from django.http import HttpResponse
 from django.utils import timezone
@@ -533,7 +533,28 @@ class FilingWorkflowBaseView(APIView):
     permission_classes = [IsAuthenticated, IsCompanyMember, IsCompanyActive, CanManageStatutory]
 
     def get_filing_locked(self, request, pk):
-        return StatutoryFiling.objects.select_for_update().select_related('company', 'rule', 'payroll_run').filter(pk=pk, company=request.user.company).first()
+        """Fetch the filing under a row lock, so two reviewers cannot both win.
+
+        ``of=('self',)`` names the one table to lock. Without it Django emits a
+        bare ``FOR UPDATE``, which spans every table the query joins - and
+        ``payroll_run`` is nullable, so ``select_related`` makes it a LEFT OUTER
+        JOIN. Postgres refuses exactly that:
+
+            FOR UPDATE cannot be applied to the nullable side of an outer join
+
+        which made every filing transition (review, approve, pay, submit, close)
+        a 500 on Postgres while passing on SQLite, where FOR UPDATE does not
+        exist. Locking only the filing row keeps the join - and the eager load
+        that avoids an N+1 - and drops the lock on tables nothing here mutates.
+
+        SQLite has no FOR UPDATE and Django rejects ``of=`` on backends without
+        it, so the clause is omitted rather than raising on a zero-config local
+        run.
+        """
+        queryset = StatutoryFiling.objects.select_related('company', 'rule', 'payroll_run')
+        if connection.features.has_select_for_update_of:
+            queryset = queryset.select_for_update(of=('self',))
+        return queryset.filter(pk=pk, company=request.user.company).first()
 
     def get_filing(self, request, pk):
         return StatutoryFiling.objects.select_related('company', 'rule', 'payroll_run').filter(pk=pk, company=request.user.company).first()
