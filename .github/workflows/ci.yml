@@ -41,6 +41,15 @@ jobs:
         with:
           python-version: '3.11'
 
+      # Two marketing-editor guards shell out to Node to run the frontend
+      # source through a parser. Without it they died in setUpClass with
+      # FileNotFoundError: 'node' - which reads like a broken test rather than
+      # a missing runtime.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Install dependencies
         run: |
           cd backend

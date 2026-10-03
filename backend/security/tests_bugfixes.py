@@ -12,7 +12,7 @@ page returning HTTP 500, because ``SecureLoginView`` reads the MFA device
 unguarded and `security_mfadevice` did not exist.
 """
 from django.apps import apps
-from django.db import OperationalError, connection
+from django.db import DatabaseError, connection
 from django.db.migrations.loader import MigrationLoader
 from django.test import TestCase, TransactionTestCase, override_settings
 from rest_framework.test import APIClient
@@ -80,10 +80,12 @@ class SecurityMigrationDiscoveryTests(TestCase):
 
     def test_security_tables_exist_in_the_database(self):
         """The live schema must actually have the app's tables."""
-        with connection.cursor() as cursor:
-            present = {r[0] for r in cursor.execute(
-                "select name from sqlite_master where type='table'"
-            )}
+        # connection.introspection.table_names() rather than a literal query.
+        # This read `sqlite_master`, which exists only in SQLite, so on the
+        # Postgres that Docker and CI both run it died with UndefinedTable
+        # before checking anything. The test guarding "the migration actually
+        # created the tables" had never once verified that on a real database.
+        present = set(connection.introspection.table_names())
         missing = [
             m._meta.db_table for m in apps.get_app_config('security').get_models()
             if m._meta.db_table not in present
@@ -111,6 +113,25 @@ class LoginWithoutSecuritySchemaTests(TransactionTestCase):
         self.client = APIClient()
         self.credentials = {'username': 'noschema', 'password': PASSWORD}
 
+    def tearDown(self):
+        """A leaked DROP must fail here, not three tests later.
+
+        These tests drop a real table out of the shared test database. The
+        `finally` blocks rebuild it, but nothing verified that they ran: when
+        the body raised something unexpected the rebuild was skipped and
+        `security_mfadevice` stayed missing for every test that followed,
+        surfacing as `relation ... does not exist` in unrelated tests in other
+        apps. Asserting it here turns that silent cross-test contamination
+        into an obvious failure at the point it happens.
+        """
+        self.assertIn(
+            MFADevice._meta.db_table,
+            set(connection.introspection.table_names()),
+            f'{MFADevice._meta.db_table} was dropped for a test and never '
+            'restored. Every test after this one is now running against a '
+            'schema no real deployment has, so their results mean nothing.',
+        )
+
     def test_login_does_not_500_when_the_mfa_table_is_missing(self):
         """This is the exact failure the user hit: sign-in was impossible."""
         drop_table('security_mfadevice')
@@ -130,7 +151,15 @@ class LoginWithoutSecuritySchemaTests(TransactionTestCase):
         drop_table('security_mfadevice')
         try:
             with override_settings(DEBUG=False):
-                with self.assertRaises(OperationalError):
+                # DatabaseError, not OperationalError: the two backends report a
+                # missing table with different exception types. SQLite raises
+                # OperationalError ("no such table"), Postgres raises
+                # ProgrammingError ("relation ... does not exist"). Both are
+                # DatabaseError subclasses, so this asserts the actual
+                # requirement - the request fails rather than quietly
+                # authenticating - on either backend. Pinning the subclass to
+                # SQLite's meant this passed locally and failed in CI.
+                with self.assertRaises(DatabaseError):
                     self.client.post(LOGIN_URL, self.credentials, format='json')
         finally:
             recreate_table(MFADevice)
