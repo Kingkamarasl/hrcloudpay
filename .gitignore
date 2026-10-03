@@ -28,6 +28,12 @@ backend/staticfiles/
 frontend/node_modules/
 package-lock.json.bak
 
+# Vercel local build/link state. `vercel dev -L` writes one per service root
+# (so backend/.vercel/ as well as .vercel/), and it records the linked project
+# id and dev-server settings. Not build output - regenerable, but it is per
+# machine and was previously untracked-and-unignored.
+.vercel/
+
 # Python bytecode and virtualenvs.
 __pycache__/
 *.py[cod]
