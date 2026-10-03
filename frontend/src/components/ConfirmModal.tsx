@@ -1,4 +1,16 @@
-import { useEffect } from 'react';
+import { useEffect, type ReactNode } from 'react';
+
+interface ConfirmModalProps {
+  open: boolean;
+  title?: string;
+  message?: ReactNode;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  danger?: boolean;
+  busy?: boolean;
+  onConfirm?: () => void;
+  onCancel?: () => void;
+}
 
 export default function ConfirmModal({
   open,
@@ -10,10 +22,10 @@ export default function ConfirmModal({
   busy = false,
   onConfirm,
   onCancel,
-}) {
+}: ConfirmModalProps) {
   useEffect(() => {
     if (!open) return undefined;
-    const onKey = (e) => {
+    const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onCancel?.();
     };
     window.addEventListener('keydown', onKey);

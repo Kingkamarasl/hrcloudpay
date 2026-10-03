@@ -4,9 +4,30 @@ import Icon from './Icon';
 
 const ENDPOINT = '/auth/security/connection/';
 
+interface SessionState {
+  icon: string;
+  label: string;
+  note: string;
+  tone: string;
+}
+
+interface ConnectionData {
+  session?: { status?: string };
+  source?: string;
+  ip_address?: string;
+  city?: string;
+  region?: string;
+  country?: string;
+  country_code?: string;
+  isp?: string;
+  asn?: string | number;
+  checked_at?: string;
+  refresh_throttled?: boolean;
+}
+
 /* The backend reports security facts; the wording, icon and colour are a
    presentation decision, so they live here rather than in the API. */
-const SESSION_STATES = {
+const SESSION_STATES: Record<string, SessionState> = {
   /* Shown only until the first answer arrives. It must not borrow the alarming
      'unknown' styling, or every page load opens on a red warning. */
   pending: { icon: 'shield', label: 'Checking session…', note: '', tone: 'idle' },
@@ -21,7 +42,7 @@ const SESSION_STATES = {
 /* ISO 3166-1 alpha-2 to a flag, via the two regional indicator symbols. Returns
    '' for anything that is not a two-letter code, so a provider that sends a
    country *name* in this field cannot render as a broken box. */
-function flagFor(code) {
+function flagFor(code: unknown): string {
   if (typeof code !== 'string' || !/^[A-Za-z]{2}$/.test(code.trim())) return '';
   const base = 0x1f1e6;
   const upper = code.trim().toUpperCase();
@@ -31,7 +52,7 @@ function flagFor(code) {
   );
 }
 
-function relativeTime(iso, now) {
+function relativeTime(iso: string, now: number): string {
   const then = Date.parse(iso);
   if (Number.isNaN(then)) return 'Unknown';
   const seconds = Math.max(0, Math.round((now - then) / 1000));
@@ -44,7 +65,7 @@ function relativeTime(iso, now) {
   return `${Math.round(hours / 24)}d ago`;
 }
 
-function clockTime(value) {
+function clockTime(value: string): string {
   try {
     return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   } catch {
@@ -52,7 +73,7 @@ function clockTime(value) {
   }
 }
 
-function fullTime(value) {
+function fullTime(value: string): string {
   try {
     return new Date(value).toLocaleString();
   } catch {
@@ -62,7 +83,7 @@ function fullTime(value) {
 
 /* Read once per render rather than in an effect: it cannot change without the
    page being re-rendered anyway, and this keeps the render pure. */
-function browserZone() {
+function browserZone(): { zone: string; offset: string } {
   try {
     const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Unknown';
     // getTimezoneOffset counts minutes *behind* UTC, hence the negation.
@@ -76,7 +97,18 @@ function browserZone() {
   }
 }
 
-function Fact({ icon, label, value, sub, flag, title, isTime, time }) {
+interface FactProps {
+  icon: string;
+  label: string;
+  value: string;
+  sub?: string;
+  flag?: string;
+  title?: string;
+  isTime?: boolean;
+  time?: string;
+}
+
+function Fact({ icon, label, value, sub, flag, title, isTime, time }: FactProps) {
   return (
     <div className="connection-fact">
       <dt>
@@ -101,21 +133,28 @@ function Fact({ icon, label, value, sub, flag, title, isTime, time }) {
 /* Loopback and private ranges are both "no public location", but calling a
    request that never left the machine a "private network" is misleading in the
    other direction - the user is sitting at the machine, not on some LAN. */
-function isLoopbackAddress(ip) {
+function isLoopbackAddress(ip: unknown): boolean {
   if (typeof ip !== 'string') return false;
   const value = ip.trim().toLowerCase();
   return value === '::1' || value === '0:0:0:0:0:0:0:1' || /^127\./.test(value);
 }
 
+interface ConnectionState {
+  loading: boolean;
+  data: ConnectionData | null;
+  failed: boolean;
+  refreshing: boolean;
+}
+
 export default function ConnectionDetails() {
-  const [state, setState] = useState({ loading: true, data: null, failed: false, refreshing: false });
+  const [state, setState] = useState<ConnectionState>({ loading: true, data: null, failed: false, refreshing: false });
   const [now, setNow] = useState(() => Date.now());
   const mounted = useRef(true);
 
-  const load = useCallback((force) => {
+  const load = useCallback((force: boolean) => {
     setState((current) => ({ ...current, refreshing: force ? true : current.loading }));
     api
-      .get(force ? `${ENDPOINT}?refresh=1` : ENDPOINT)
+      .get<ConnectionData>(force ? `${ENDPOINT}?refresh=1` : ENDPOINT)
       .then((data) => {
         if (mounted.current) setState({ loading: false, data, failed: false, refreshing: false });
       })
@@ -150,7 +189,7 @@ export default function ConnectionDetails() {
     : SESSION_STATES[(session && session.status) || 'unknown'] || SESSION_STATES.unknown;
   const { zone, offset } = browserZone();
   const isPrivate = !data || data.source === 'private';
-  const lookupFailed = data && data.source === 'unavailable';
+  const lookupFailed = !!data && data.source === 'unavailable';
 
   const place = !data
     ? ''
@@ -168,7 +207,7 @@ export default function ConnectionDetails() {
       ? 'Not applicable'
       : data.isp || 'Not published';
 
-  const facts = [
+  const facts: Array<FactProps & { key: string }> = [
     {
       key: 'ip',
       icon: 'signal',
@@ -198,7 +237,7 @@ export default function ConnectionDetails() {
       icon: 'clock',
       label: 'Browser time zone',
       value: zone,
-      sub: [offset, clockTime(now)].filter(Boolean).join(' · '),
+      sub: [offset, clockTime(new Date(now).toISOString())].filter(Boolean).join(' · '),
     },
     {
       key: 'checked',
@@ -206,7 +245,7 @@ export default function ConnectionDetails() {
       label: 'Last checked',
       value: (data && data.checked_at) || new Date(now).toISOString(),
       isTime: true,
-      time: data ? relativeTime(data.checked_at, now) : 'Checking…',
+      time: data && data.checked_at ? relativeTime(data.checked_at, now) : 'Checking…',
       sub: data && data.checked_at ? clockTime(data.checked_at) : '',
     },
   ];
@@ -244,8 +283,8 @@ export default function ConnectionDetails() {
         </span>
       </div>
       <dl className="connection-facts">
-        {facts.map((fact) => (
-          <Fact key={fact.key} {...fact} />
+        {facts.map(({ key, ...fact }) => (
+          <Fact key={key} {...fact} />
         ))}
       </dl>
       {local && data ? (

@@ -2,47 +2,40 @@ import { Link } from 'react-router-dom';
 import Icon from './Icon';
 import { useFeatures } from '../context/FeatureContext';
 
-// One icon per reason code, so the picture cannot contradict the sentence.
-// These are the only four values `feature_status()` can return for a disabled
-// flag; anything else falls through to the neutral entry below.
-const ICON_BY_REASON = {
+const ICON_BY_REASON: Record<string, string> = {
   disabled: 'lock',
   environment: 'globe',
   rollout_zero: 'clock',
   rollout_bucket: 'trend',
 };
 
-// A staged rollout is something arriving, not something that went wrong, so it
-// wears the primary green. Everything else is a plain neutral note. Neither is
-// ever red: nothing has errored.
-const TONE_BY_REASON = {
+const TONE_BY_REASON: Record<string, string> = {
   disabled: 'note',
   environment: 'note',
   rollout_zero: 'progress',
   rollout_bucket: 'progress',
 };
 
-/**
- * Stand-in for a module this company cannot use.
- *
- * `title` should be the module's own display name, because the body text
- * already begins with it - the API sentence reads "<name> is turned off for
- * your workspace", so the heading is a label, not an explanation.
- */
+interface FeatureUnavailableProps {
+  featureKey: string;
+  title: string;
+  backTo?: string;
+  backLabel?: string;
+  children?: React.ReactNode;
+}
+
 export default function FeatureUnavailable({
   featureKey,
   title,
   backTo = '/dashboard',
   backLabel = 'Back to dashboard',
   children,
-}) {
+}: FeatureUnavailableProps) {
   const { messageFor, reasonFor, unavailable, loading } = useFeatures();
 
   const reason = reasonFor(featureKey);
   const message = messageFor(featureKey);
 
-  // Two cases have to be handled without an API sentence, because there is no
-  // server verdict to quote.
   if (unavailable) {
     return (
       <div className="feature-note" role="status">
@@ -69,9 +62,6 @@ export default function FeatureUnavailable({
 
   if (loading) return null;
 
-  // No message means the server told us the flag is off but not why, which
-  // should not happen. Say the one thing that is still true rather than
-  // guessing at a cause.
   const body = message || `${title} is not available for your workspace.`;
 
   return (

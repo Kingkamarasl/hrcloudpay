@@ -6,24 +6,40 @@
 const API_URL = import.meta.env.VITE_API_URL
   || (import.meta.env.DEV ? 'http://localhost:8000/api' : '/api');
 
-function getToken() { return null; }
-export function setToken(_token) { /* Browser authentication uses HttpOnly cookies. */ }
+export function setToken(_token: string): void { /* Browser authentication uses HttpOnly cookies. */ }
 
-function getCookie(name) {
+function getCookie(name: string): string {
   const value = document.cookie.split('; ').find(row => row.startsWith(`${name}=`));
   return value ? decodeURIComponent(value.split('=').slice(1).join('=')) : '';
 }
 
-async function request(path, { method = 'GET', body, auth = true } = {}) {
+interface RequestOptions {
+  method?: string;
+  body?: unknown;
+  auth?: boolean;
+}
+
+interface ApiError extends Error {
+  status: number;
+  data?: unknown;
+}
+
+interface ApiResponse {
+  detail?: string;
+  message?: string;
+  [key: string]: unknown;
+}
+
+async function request(path: string, { method = 'GET', body, auth = true }: RequestOptions = {}): Promise<unknown> {
   const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
   // Never set Content-Type for FormData — the browser must add the multipart boundary.
-  const headers = isFormData ? {} : { 'Content-Type': 'application/json' };
-  if (auth && !['GET','HEAD','OPTIONS'].includes(method)) {
+  const headers: Record<string, string> = isFormData ? {} : { 'Content-Type': 'application/json' };
+  if (auth && !['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     const csrf = getCookie('csrftoken');
     if (csrf) headers['X-CSRFToken'] = csrf;
   }
 
-  let res;
+  let res: Response;
   try {
     res = await fetch(`${API_URL}${path}`, {
       method,
@@ -31,17 +47,18 @@ async function request(path, { method = 'GET', body, auth = true } = {}) {
       credentials: 'include',
       body: body ? (isFormData ? body : JSON.stringify(body)) : undefined,
     });
-  } catch (networkErr) {
+  } catch (networkErr: unknown) {
+    const err = networkErr as Error;
     const error = new Error(
-      networkErr?.message?.includes('Failed to fetch')
+      err?.message?.includes('Failed to fetch')
         ? 'Cannot reach the API server. Check that the backend is running and VITE_API_URL is correct.'
-        : (networkErr.message || 'Network error'),
-    );
+        : (err.message || 'Network error'),
+    ) as ApiError;
     error.status = 0;
     throw error;
   }
 
-  let data = null;
+  let data: unknown = null;
   const text = await res.text();
   if (text) {
     try {
@@ -58,19 +75,19 @@ async function request(path, { method = 'GET', body, auth = true } = {}) {
         window.location.assign('/login');
       }
     }
-    let message =
-      (data && (data.detail || data.message)) ||
-      (typeof data === 'object' && data ? JSON.stringify(data) : null) ||
-      `Request failed (${res.status})`;
+    let detail = data && typeof data === 'object' && (data as ApiResponse).detail;
+    let msg = data && typeof data === 'object' && (data as ApiResponse).message;
+    let fallback: string | null = typeof data === 'object' && data ? (JSON.stringify(data) as string) : null;
+    let message: string = (detail || msg || fallback || `Request failed (${res.status})`) as string;
     // DRF validation errors are often { field: ["msg"] }
-    if (typeof data === 'object' && data && !data.detail && !data.message) {
-      const parts = Object.entries(data).map(([k, v]) => {
+    if (typeof data === 'object' && data && !(data as ApiResponse).detail && !(data as ApiResponse).message) {
+      const parts = Object.entries(data as Record<string, unknown>).map(([k, v]) => {
         const val = Array.isArray(v) ? v.join(', ') : String(v);
         return `${k}: ${val}`;
       });
       if (parts.length) message = parts.join('; ');
     }
-    const error = new Error(message);
+    const error = new Error(message) as ApiError;
     error.status = res.status;
     error.data = data;
     throw error;
@@ -79,7 +96,7 @@ async function request(path, { method = 'GET', body, auth = true } = {}) {
   return data;
 }
 
-export async function downloadFile(path) {
+export async function downloadFile(path: string): Promise<{ blob: Blob; disposition: string }> {
   const res = await fetch(`${API_URL}${path}`, { credentials: 'include' });
   if (!res.ok) {
     const text = await res.text();
@@ -89,15 +106,15 @@ export async function downloadFile(path) {
 }
 
 export const api = {
-  get: (path, opts = {}) => request(path, { ...opts }),
-  post: (path, body, opts = {}) => request(path, { method: 'POST', body, ...opts }),
-  put: (path, body) => request(path, { method: 'PUT', body }),
-  patch: (path, body) => request(path, { method: 'PATCH', body }),
+  get: <T,>(path: string, opts: RequestOptions = {}) => request(path, { ...opts }) as Promise<T>,
+  post: <T,>(path: string, body: unknown, opts: RequestOptions = {}) => request(path, { method: 'POST', body, ...opts }) as Promise<T>,
+  put: <T,>(path: string, body: unknown) => request(path, { method: 'PUT', body }) as Promise<T>,
+  patch: <T,>(path: string, body: unknown) => request(path, { method: 'PATCH', body }) as Promise<T>,
   // `body` is optional and used by the few endpoints where a destructive action
   // needs its confirmation carried in the request (typing the exact username, for
   // instance) rather than in a second round trip.
-  del: (path, body) => request(path, { method: 'DELETE', body }),
-  upload: (path, formData) => request(path, { method: 'POST', body: formData }),
+  del: <T,>(path: string, body?: unknown) => request(path, { method: 'DELETE', body }) as Promise<T>,
+  upload: (path: string, formData: FormData) => request(path, { method: 'POST', body: formData }),
 };
 
 export { API_URL };

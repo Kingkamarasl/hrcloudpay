@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
-import { COMPANY_ROLES, ROLE_LABELS, canManageDrafts, canManageKnowledge } from '../constants/roles';
+import { COMPANY_ROLES, ROLE_LABELS, canManageDrafts, canManageKnowledge, CompanyRole } from '../constants/roles';
 import Icon from './Icon';
 
 const suggestions = [
@@ -13,17 +13,54 @@ const suggestions = [
 
 const emptyKnowledgeForm = { title: '', source_type: 'policy', content: '', allowed_roles: [...COMPANY_ROLES] };
 
-/**
- * Whether an assistant message was backed by a verified database read.
- *
- * This must look at the tool list, not at the metadata object itself: the metadata
- * is also populated for a pure knowledge-base answer, and testing it for truthiness
- * showed a green "Verified HRCloudPay data" tick on answers stitched from uploaded
- * documents with no verified read behind them. Reading `metadata` (rather than the
- * live-response-only `tool` field) also means a message renders the same whether it
- * just arrived or was reloaded from history.
- */
-const verifiedToolCount = (message) => message?.metadata?.tools?.length ?? message?.tool?.tools?.length ?? 0;
+interface Message {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  metadata?: {
+    tools?: unknown[];
+    knowledge?: Array<{
+      document_id: string;
+      citation: string;
+      title: string;
+      source_type: string;
+      page_number?: number;
+      section_label?: string;
+      snippet?: string;
+    }>;
+  };
+  tool?: {
+    tools?: unknown[];
+  };
+}
+
+interface KnowledgeItem {
+  id: string;
+  title: string;
+  source_type: string;
+  source_type_label: string;
+  version: number;
+  chunk_count: number;
+  lifecycle_status: string;
+  allowed_roles: string[];
+  needs_reindex: boolean;
+}
+
+interface DraftItem {
+  id: string;
+  type: string;
+  type_label: string;
+  status: string;
+  status_label: string;
+  content: string;
+}
+
+interface KnowledgeForm {
+  title: string;
+  source_type: string;
+  content: string;
+  allowed_roles: string[];
+}
 
 export default function AIChatWidget() {
   const { user } = useAuth();
@@ -32,23 +69,23 @@ export default function AIChatWidget() {
   const mayManageDrafts = canManageDrafts(role);
 
   const [open, setOpen] = useState(false);
-  const [conversationId, setConversationId] = useState(null);
-  const [messages, setMessages] = useState([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [draftOpen, setDraftOpen] = useState(false);
   const [draftType, setDraftType] = useState('employment_letter');
   const [draftContext, setDraftContext] = useState('');
-  const [draft, setDraft] = useState(null);
+  const [draft, setDraft] = useState<DraftItem | null>(null);
   const [draftLoading, setDraftLoading] = useState(false);
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
-  const [knowledge, setKnowledge] = useState([]);
-  const [knowledgeForm, setKnowledgeForm] = useState(emptyKnowledgeForm);
-  const [knowledgeFile, setKnowledgeFile] = useState(null);
+  const [knowledge, setKnowledge] = useState<KnowledgeItem[]>([]);
+  const [knowledgeForm, setKnowledgeForm] = useState<KnowledgeForm>(emptyKnowledgeForm);
+  const [knowledgeFile, setKnowledgeFile] = useState<File | null>(null);
   const [knowledgeLoading, setKnowledgeLoading] = useState(false);
-  const bottomRef = useRef(null);
-  const inputRef = useRef(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -57,9 +94,6 @@ export default function AIChatWidget() {
     return () => clearTimeout(timer);
   }, [open, messages, loading]);
 
-  // Tracks the request the user is currently waiting on, so a "new conversation"
-  // during an in-flight send discards the reply instead of writing the abandoned
-  // conversation's id back into the fresh thread.
   const pendingRef = useRef(0);
 
   function newConversation() {
@@ -72,9 +106,6 @@ export default function AIChatWidget() {
   }
 
   function closeWidget() {
-    // Drafts and pasted knowledge stay in component state, and this component is
-    // mounted on every route, so a generated warning letter would remain rendered
-    // for the rest of the session. Clear the sensitive state on close.
     pendingRef.current += 1;
     setOpen(false);
     setDraft(null);
@@ -95,7 +126,7 @@ export default function AIChatWidget() {
     setLoading(true);
     const ticket = pendingRef.current;
     try {
-      const data = await api.post('/ai/conversations/', {
+      const data = await api.post<{ conversation_id: string; message: Message }>('/ai/conversations/', {
         conversation_id: conversationId,
         message: prompt,
       });
@@ -104,7 +135,7 @@ export default function AIChatWidget() {
       setMessages((prev) => [...prev, data.message]);
     } catch (err) {
       if (ticket !== pendingRef.current) return;
-      setError(err.message || 'HRCloudPay AI could not respond.');
+      setError((err as Error).message || 'HRCloudPay AI could not respond.');
     } finally {
       if (ticket === pendingRef.current) setLoading(false);
     }
@@ -115,40 +146,36 @@ export default function AIChatWidget() {
     setDraftLoading(true);
     setError('');
     try {
-      const data = await api.post('/ai/drafts/', { type: draftType, context: draftContext.trim() });
+      const data = await api.post<DraftItem>('/ai/drafts/', { type: draftType, context: draftContext.trim() });
       setDraft(data);
       setDraftContext('');
     } catch (err) {
-      setError(err.message || 'Could not create the AI draft.');
+      setError((err as Error).message || 'Could not create the AI draft.');
     } finally {
       setDraftLoading(false);
     }
   }
 
-  async function reviewDraft(status) {
+  async function reviewDraft(status: string) {
     if (!draft || draftLoading) return;
     setDraftLoading(true);
     setError('');
     try {
-      const data = await api.patch(`/ai/drafts/${draft.id}/`, { status });
+      const data = await api.patch<DraftItem>(`/ai/drafts/${draft.id}/`, { status });
       setDraft(data);
     } catch (err) {
-      setError(err.message || 'Could not update the draft.');
+      setError((err as Error).message || 'Could not update the draft.');
     } finally {
       setDraftLoading(false);
     }
   }
 
-
   async function loadKnowledge() {
-    try { setKnowledge(await api.get('/ai/knowledge/')); } catch (err) { setError(err.message || 'Could not load AI knowledge.'); }
+    try { setKnowledge(await api.get<KnowledgeItem[]>('/ai/knowledge/')); } catch (err) { setError((err as Error).message || 'Could not load AI knowledge.'); }
   }
 
   async function uploadKnowledgeFile() {
     if (!knowledgeFile || knowledgeLoading) return;
-    // An empty role selection must never be sent: the backend cannot tell "nobody"
-    // from "not specified" on a multipart body, and would widen it to the whole
-    // company. Refuse locally instead of relying on a 400.
     if (!knowledgeForm.allowed_roles.length) {
       setError('Select at least one role that may use this knowledge.');
       return;
@@ -159,16 +186,13 @@ export default function AIChatWidget() {
       form.append('file', knowledgeFile);
       form.append('title', knowledgeForm.title.trim() || knowledgeFile.name.replace(/\.[^.]+$/, ''));
       form.append('source_type', knowledgeForm.source_type);
-      // Joined, not appended per role: repeating the key makes DRF's QueryDict
-      // return only the last value, which silently stored every upload as
-      // "employee only".
       form.append('allowed_roles', knowledgeForm.allowed_roles.join(','));
       const data = await api.upload('/ai/knowledge/upload/', form);
       setKnowledgeFile(null);
       setKnowledgeForm(emptyKnowledgeForm);
       await loadKnowledge();
       return data;
-    } catch (err) { setError(err.message || 'Could not extract and index the document.'); }
+    } catch (err) { setError((err as Error).message || 'Could not extract and index the document.'); }
     finally { setKnowledgeLoading(false); }
   }
 
@@ -183,43 +207,40 @@ export default function AIChatWidget() {
       await api.post('/ai/knowledge/', knowledgeForm);
       setKnowledgeForm(emptyKnowledgeForm);
       await loadKnowledge();
-    } catch (err) { setError(err.message || 'Could not index the document.'); }
+    } catch (err) { setError((err as Error).message || 'Could not index the document.'); }
     finally { setKnowledgeLoading(false); }
   }
 
-  async function updateKnowledge(id, action) {
+  async function updateKnowledge(id: string, action: string) {
     if (knowledgeLoading) return;
     setKnowledgeLoading(true); setError('');
     try { await api.patch(`/ai/knowledge/${id}/`, { action }); await loadKnowledge(); }
-    catch (err) { setError(err.message || 'Could not update the document.'); }
+    catch (err) { setError((err as Error).message || 'Could not update the document.'); }
     finally { setKnowledgeLoading(false); }
   }
 
-  async function removeKnowledge(id) {
+  async function removeKnowledge(id: string) {
     if (knowledgeLoading) return;
     setKnowledgeLoading(true); setError('');
     try { await api.del(`/ai/knowledge/${id}/`); await loadKnowledge(); }
-    catch (err) { setError(err.message || 'Could not remove the document.'); }
+    catch (err) { setError((err as Error).message || 'Could not remove the document.'); }
     finally { setKnowledgeLoading(false); }
   }
 
-  // Reindexing is its own endpoint. It used to be preceded by an empty PATCH purely
-  // to touch the URL, which wrote a no-op row and a bogus "Updated AI knowledge
-  // document" audit entry on every click.
-  async function reindexKnowledge(item) {
+  async function reindexKnowledge(item: KnowledgeItem) {
     if (knowledgeLoading) return;
     setKnowledgeLoading(true); setError('');
     try { await api.post('/ai/knowledge/reindex/', { document_id: item.id }); await loadKnowledge(); }
-    catch (err) { setError(err.message || 'Could not reindex the document.'); }
+    catch (err) { setError((err as Error).message || 'Could not reindex the document.'); }
     finally { setKnowledgeLoading(false); }
   }
 
-  function onSubmit(e) {
+  function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     sendMessage();
   }
 
-  function toggleRole(role) {
+  function toggleRole(role: string) {
     setKnowledgeForm((f) => ({
       ...f,
       allowed_roles: f.allowed_roles.includes(role)
@@ -227,6 +248,8 @@ export default function AIChatWidget() {
         : [...f.allowed_roles, role],
     }));
   }
+
+  const verifiedToolCount = (message: Message) => message?.metadata?.tools?.length ?? message?.tool?.tools?.length ?? 0;
 
   return (
     <div className={`ai-widget ${open ? 'is-open' : ''}`}>
@@ -287,7 +310,7 @@ export default function AIChatWidget() {
               <textarea value={knowledgeForm.content} onChange={(e) => setKnowledgeForm({ ...knowledgeForm, content: e.target.value })} rows={4} placeholder="Paste approved company policy or HR guidance..." />
               <button type="button" className="ai-widget-draft-create secondary" onClick={addKnowledge} disabled={knowledgeLoading || !knowledgeForm.title.trim() || !knowledgeForm.content.trim() || !knowledgeForm.allowed_roles.length}>Index pasted content</button>
               <div className="ai-widget-knowledge-list">{knowledge.map((item) => <div key={item.id}>
-                <div><strong>{item.title}</strong><small>{item.source_type_label} · v{item.version} · {item.chunk_count} chunks · {item.lifecycle_status}</small><small>Access: {(item.allowed_roles || []).map((r) => ROLE_LABELS[r] || r).join(', ')}</small>{item.needs_reindex && <small>Index is stale - reindex to restore semantic search.</small>}</div>
+                <div><strong>{item.title}</strong><small>{item.source_type_label} · v{item.version} · {item.chunk_count} chunks · {item.lifecycle_status}</small><small>Access: {(item.allowed_roles || []).map((r) => ROLE_LABELS[r as CompanyRole] || r).join(', ')}</small>{item.needs_reindex && <small>Index is stale - reindex to restore semantic search.</small>}</div>
                 <div className="ai-widget-knowledge-actions">
                   {item.lifecycle_status === 'archived' ? <button type="button" onClick={() => updateKnowledge(item.id, 'restore')} disabled={knowledgeLoading}>Restore</button> : <button type="button" onClick={() => updateKnowledge(item.id, 'archive')} disabled={knowledgeLoading}>Archive</button>}
                   <button type="button" onClick={() => reindexKnowledge(item)} disabled={knowledgeLoading}>Reindex</button>
@@ -349,7 +372,7 @@ export default function AIChatWidget() {
                 <div className="ai-widget-bubble">
                   <div className="ai-widget-content">{message.content}</div>
                   {verifiedToolCount(message) > 0 && <div className="ai-widget-verified"><Icon name="check" size={12} /> Verified HRCloudPay data</div>}
-                  {message.metadata?.knowledge?.length > 0 && (
+                  {message.metadata?.knowledge && message.metadata.knowledge.length > 0 && (
                     <div className="ai-widget-sources">
                       <div className="ai-widget-sources-title">Sources</div>
                       {message.metadata.knowledge.map((source) => (
@@ -382,7 +405,7 @@ export default function AIChatWidget() {
               placeholder="Ask HRCloudPay AI..."
               rows={1}
               disabled={loading}
-              onKeyDown={(e) => {
+              onKeyDown={(e: React.KeyboardEvent) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
                   onSubmit(e);

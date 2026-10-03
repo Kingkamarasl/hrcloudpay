@@ -15,7 +15,67 @@ import { MarketingSections } from './MarketingSections';
 //     a hand-written approximation of the hero, which meant the thing being
 //     reviewed was not the thing being published.
 
-function labelFor(field) {
+/** A field spec as returned by the backend's `/platform/marketing-pages/` schema. */
+interface FieldSpec {
+  kind: string;
+  limit: number;
+}
+
+/** Editable values inside a section or repeated item. */
+type EditorValues = Record<string, unknown>;
+
+/** The repeated/notes group definition on a section type. */
+interface RepeatedSpec {
+  key: string;
+  item_label: string;
+  item_list?: { key: string; limit: number };
+  item_extra?: { key: string };
+  fields: Record<string, FieldSpec>;
+}
+
+/** One section type's full definition. */
+interface SectionDefinition {
+  label: string;
+  hint: string;
+  fields: Record<string, FieldSpec>;
+  repeated?: RepeatedSpec;
+  notes?: RepeatedSpec;
+}
+
+/** One marketing page row as the editor receives it. */
+interface PageRow {
+  slug: string;
+  name: string;
+  draft_name?: string;
+  content?: { sections?: EditorValues[] };
+  draft_content?: { sections?: EditorValues[] };
+  is_published?: boolean;
+  draft_is_published?: boolean;
+  has_draft?: boolean;
+  updated_at?: string;
+  updated_by?: string;
+}
+
+/** The whole editor payload: the page list plus the schema. */
+export interface EditorPayload {
+  pages?: PageRow[];
+  schema?: {
+    sections?: Record<string, SectionDefinition>;
+    max_sections?: number;
+    max_repeated?: number;
+  };
+}
+
+export interface MarketingEditorProps {
+  payload?: EditorPayload;
+  onSave: (slug: string, body: unknown, action: string) => Promise<unknown>;
+  onCreate: (body: unknown) => Promise<PageRow | undefined>;
+  onDelete: (slug: string) => Promise<unknown>;
+  onError?: (message: string) => void;
+  onNotice?: (message: string) => void;
+}
+
+function labelFor(field: string) {
   return field.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
 }
 
@@ -23,17 +83,25 @@ function labelFor(field) {
 // The backend re-checks on write - this is a courtesy, not the boundary.
 const SAFE_HREF = /^(?:\/(?!\/)|#|https:\/\/)/i;
 
-function TextField({ name, spec, value, onChange, id }) {
+interface TextFieldProps {
+  name: string;
+  spec: FieldSpec;
+  value: unknown;
+  onChange: (next: unknown) => void;
+  id: string;
+}
+
+function TextField({ name, spec, value, onChange, id }: TextFieldProps) {
   const limit = spec.limit;
   const long = spec.kind === 'longtext';
   if (spec.kind === 'href') {
-    const invalid = value && !SAFE_HREF.test(value.trim());
+    const invalid = Boolean(value) && !SAFE_HREF.test(String(value).trim());
     return (
       <label className="me-field" htmlFor={id}>
         <span className="me-label">{labelFor(name)}</span>
         <input
           id={id}
-          value={value || ''}
+          value={(value as string) || ''}
           onChange={(e) => onChange(e.target.value)}
           placeholder="/pricing or https://example.com"
           aria-invalid={invalid || undefined}
@@ -55,44 +123,75 @@ function TextField({ name, spec, value, onChange, id }) {
       </label>
     );
   }
-  const over = value && value.length > limit;
+  const text = (value as string) || '';
+  const over = Boolean(text) && text.length > limit;
   return (
     <label className="me-field" htmlFor={id}>
       <span className="me-label">
         {labelFor(name)}
-        <em className={over ? 'me-over' : ''}>{`${(value || '').length}/${limit}`}</em>
+        <em className={over ? 'me-over' : ''}>{`${text.length}/${limit}`}</em>
       </span>
       {long ? (
         <textarea
           id={id}
           rows={3}
-          value={value || ''}
+          value={text}
           onChange={(e) => onChange(e.target.value)}
         />
       ) : (
-        <input id={id} value={value || ''} onChange={(e) => onChange(e.target.value)} />
+        <input id={id} value={text} onChange={(e) => onChange(e.target.value)} />
       )}
       {over && <small className="me-error">Will be shortened to {limit} characters when saved.</small>}
     </label>
   );
 }
 
-function Fieldset({ fields, values, onChange, idPrefix }) {
-  return Object.entries(fields).map(([name, spec]) => (
-    <TextField
-      key={name}
-      id={`${idPrefix}-${name}`}
-      name={name}
-      spec={spec}
-      value={values[name]}
-      onChange={(next) => onChange({ ...values, [name]: next })}
-    />
-  ));
+interface FieldsetProps {
+  fields: Record<string, FieldSpec>;
+  values: EditorValues;
+  onChange: (next: EditorValues) => void;
+  idPrefix: string;
+}
+
+function Fieldset({ fields, values, onChange, idPrefix }: FieldsetProps) {
+  return (
+    <>
+      {Object.entries(fields).map(([name, spec]) => (
+        <TextField
+          key={name}
+          id={`${idPrefix}-${name}`}
+          name={name}
+          spec={spec}
+          value={values[name]}
+          onChange={(next) => onChange({ ...values, [name]: next })}
+        />
+      ))}
+    </>
+  );
+}
+
+interface RepeatedItemProps {
+  label: string;
+  fields: Record<string, FieldSpec>;
+  values: EditorValues;
+  onChange: (next: EditorValues) => void;
+  itemList?: { key: string; limit: number };
+  itemExtra?: { key: string };
+  onRemove: () => void;
+  onUp: () => void;
+  onDown: () => void;
+  index: number;
+  isFirst: boolean;
+  isLast: boolean;
+  idPrefix: string;
 }
 
 // One repeatable row: a titled block of fields, its own string list if the
 // section has one (pricing plan features), a toggle, and its own move/delete.
-function RepeatedItem({ label, fields, values, onChange, itemList, itemExtra, onRemove, onUp, onDown, index, isFirst, isLast, idPrefix }) {
+function RepeatedItem({
+  label, fields, values, onChange, itemList, itemExtra,
+  onRemove, onUp, onDown, index, isFirst, isLast, idPrefix,
+}: RepeatedItemProps) {
   return (
     <div className="me-item">
       <div className="me-item-head">
@@ -113,15 +212,29 @@ function RepeatedItem({ label, fields, values, onChange, itemList, itemExtra, on
           onChange={(next) => onChange({ ...values, [itemExtra.key]: next })}
         />
       )}
-      {itemList && <StringList values={values[itemList.key]} limit={itemList.limit} onChange={(next) => onChange({ ...values, [itemList.key]: next })} idPrefix={`${idPrefix}-${itemList.key}`} />}
+      {itemList && (
+        <StringList
+          values={values[itemList.key] as string[]}
+          limit={itemList.limit}
+          onChange={(next) => onChange({ ...values, [itemList.key]: next })}
+          idPrefix={`${idPrefix}-${itemList.key}`}
+        />
+      )}
     </div>
   );
 }
 
+interface StringListProps {
+  values: unknown;
+  onChange: (next: string[]) => void;
+  limit: number;
+  idPrefix: string;
+}
+
 // A plain list of short strings, edited one line at a time. Used for the
 // feature ticks on a plan.
-function StringList({ values, onChange, limit, idPrefix }) {
-  const rows = Array.isArray(values) ? values : [];
+function StringList({ values, onChange, limit, idPrefix }: StringListProps) {
+  const rows = Array.isArray(values) ? (values as string[]) : [];
   return (
     <div className="me-strings">
       <span className="me-label">Features</span>
@@ -151,21 +264,29 @@ function StringList({ values, onChange, limit, idPrefix }) {
   );
 }
 
-function SectionEditor({ section, definition, index, total, onChange, onRemove, onMove, maxRepeated }) {
+interface SectionEditorProps {
+  section: EditorValues;
+  definition: SectionDefinition;
+  index: number;
+  total: number;
+  onChange: (next: EditorValues) => void;
+  onRemove: () => void;
+  onMove: (index: number, delta: number) => void;
+  maxRepeated: number;
+}
+
+function SectionEditor({ section, definition, index, total, onChange, onRemove, onMove, maxRepeated }: SectionEditorProps) {
   const [open, setOpen] = useState(index === 0);
-  const idPrefix = `sec-${index}-${section.type}`;
+  const idPrefix = `sec-${index}-${String(section.type)}`;
   const repeated = definition.repeated;
   const notes = definition.notes;
-  const items = repeated ? (section[repeated.key] || []) : [];
-  const noteRows = notes ? (section[notes.key] || []) : [];
+  const items = repeated ? ((section[repeated.key] as EditorValues[]) || []) : [];
+  const noteRows = notes ? ((section[notes.key] as EditorValues[]) || []) : [];
 
-  function setField(name, value) {
-    onChange({ ...section, [name]: value });
-  }
-  function setItem(nextIndex, nextItem) {
+  function setItem(nextIndex: number, nextItem: EditorValues) {
     const next = items.slice();
     next[nextIndex] = nextItem;
-    onChange({ ...section, [repeated.key]: next });
+    onChange({ ...section, [repeated!.key]: next });
   }
 
   return (
@@ -262,15 +383,22 @@ function SectionEditor({ section, definition, index, total, onChange, onRemove, 
   );
 }
 
-function blankItem(repeated) {
-  const item = {};
+function blankItem(repeated: RepeatedSpec): EditorValues {
+  const item: EditorValues = {};
   Object.keys(repeated.fields).forEach((field) => { item[field] = ''; });
   if (repeated.item_list) item[repeated.item_list.key] = [];
   if (repeated.item_extra) item[repeated.item_extra.key] = false;
   return item;
 }
 
-function moveItem(section, key, rows, index, delta, onChange) {
+function moveItem(
+  section: EditorValues,
+  key: string,
+  rows: EditorValues[],
+  index: number,
+  delta: number,
+  onChange: (next: EditorValues) => void,
+) {
   const target = index + delta;
   if (target < 0 || target >= rows.length) return;
   const next = rows.slice();
@@ -280,22 +408,22 @@ function moveItem(section, key, rows, index, delta, onChange) {
 }
 
 // A one-line description of a section so a collapsed list is still readable.
-function summaryOf(section, definition) {
-  if (section.title) return section.title.slice(0, 60);
-  if (section.eyebrow) return section.eyebrow.slice(0, 60);
+function summaryOf(section: EditorValues, definition: SectionDefinition): string {
+  if (section.title) return String(section.title).slice(0, 60);
+  if (section.eyebrow) return String(section.eyebrow).slice(0, 60);
   if (definition.repeated) {
-    const count = (section[definition.repeated.key] || []).length;
+    const count = ((section[definition.repeated.key] as unknown[]) || []).length;
     return `${count} ${definition.repeated.key}`;
   }
   return '';
 }
 
-export default function MarketingEditor({ payload, onSave, onCreate, onDelete, onError, onNotice }) {
+export default function MarketingEditor({ payload, onSave, onCreate, onDelete, onNotice }: MarketingEditorProps) {
   const pages = payload?.pages || [];
   const schema = payload?.schema?.sections || {};
-  const [selected, setSelected] = useState(null);
+  const [selected, setSelected] = useState<string | null>(null);
   const [name, setName] = useState('');
-  const [sections, setSections] = useState([]);
+  const [sections, setSections] = useState<EditorValues[]>([]);
   const [published, setPublished] = useState(true);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -313,8 +441,8 @@ export default function MarketingEditor({ payload, onSave, onCreate, onDelete, o
     if (!page) return;
     setSelected(page.slug);
     setName(page.draft_name || page.name);
-    setSections((page.draft_content ?? page.content ?? {}).sections || []);
-    setPublished(page.draft_is_published ?? page.is_published);
+    setSections(((page.draft_content ?? page.content ?? {}) as { sections?: EditorValues[] }).sections || []);
+    setPublished(page.draft_is_published ?? page.is_published ?? true);
     setError('');
     // `dirty` means "the working copy differs from the server". Reaching this
     // point *is* the server copy, so it is false.
@@ -328,15 +456,15 @@ export default function MarketingEditor({ payload, onSave, onCreate, onDelete, o
 
   const preview = useMemo(() => ({ sections }), [sections]);
 
-  function mark(next) { setDirty(true); setError(''); return next; }
+  function mark<T>(next: T): T { setDirty(true); setError(''); return next; }
 
-  function setSection(index, next) {
+  function setSection(index: number, next: EditorValues) {
     setSections(mark(sections.map((section, i) => (i === index ? next : section))));
   }
-  function removeSection(index) {
+  function removeSection(index: number) {
     setSections(mark(sections.filter((_, i) => i !== index)));
   }
-  function moveSection(index, delta) {
+  function moveSection(index: number, delta: number) {
     const target = index + delta;
     if (target < 0 || target >= sections.length) return;
     const next = sections.slice();
@@ -344,12 +472,12 @@ export default function MarketingEditor({ payload, onSave, onCreate, onDelete, o
     next.splice(target, 0, moved);
     setSections(mark(next));
   }
-  function addSection(type) {
+  function addSection(type: string) {
     if (sections.length >= (payload?.schema?.max_sections || 40)) return;
     setSections(mark([...sections, { type }]));
   }
 
-  async function saveDraft(event) {
+  async function saveDraft(event: React.FormEvent) {
     event.preventDefault();
     if (!page) return;
     setBusy(true);
@@ -357,9 +485,9 @@ export default function MarketingEditor({ payload, onSave, onCreate, onDelete, o
     try {
       await onSave(page.slug, { name, content: { sections }, is_published: published }, 'save_draft');
       setDirty(false);
-      onNotice('Draft saved. Publish it when the preview looks right.');
+      onNotice?.('Draft saved. Publish it when the preview looks right.');
     } catch (e) {
-      setError(e.message || 'Could not save the draft.');
+      setError((e as Error).message || 'Could not save the draft.');
     } finally {
       setBusy(false);
     }
@@ -373,9 +501,9 @@ export default function MarketingEditor({ payload, onSave, onCreate, onDelete, o
     setError('');
     try {
       await onSave(page.slug, { is_published: published }, 'publish');
-      onNotice(`Published ${page.name}.`);
+      onNotice?.(`Published ${page.name}.`);
     } catch (e) {
-      setError(e.message || 'Could not publish.');
+      setError((e as Error).message || 'Could not publish.');
     } finally {
       setBusy(false);
     }
@@ -386,9 +514,9 @@ export default function MarketingEditor({ payload, onSave, onCreate, onDelete, o
     setBusy(true);
     try {
       await onSave(page.slug, {}, 'discard_draft');
-      onNotice('Draft discarded.');
+      onNotice?.('Draft discarded.');
     } catch (e) {
-      setError(e.message || 'Could not discard the draft.');
+      setError((e as Error).message || 'Could not discard the draft.');
     } finally {
       setBusy(false);
     }
@@ -406,15 +534,15 @@ export default function MarketingEditor({ payload, onSave, onCreate, onDelete, o
     try {
       await onDelete(page.slug);
       setSelected(null);
-      onNotice(`Deleted ${page.name}.`);
+      onNotice?.(`Deleted ${page.name}.`);
     } catch (e) {
-      setError(e.message || 'Could not delete the page.');
+      setError((e as Error).message || 'Could not delete the page.');
     } finally {
       setBusy(false);
     }
   }
 
-  async function create(event) {
+  async function create(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError('');
@@ -422,9 +550,9 @@ export default function MarketingEditor({ payload, onSave, onCreate, onDelete, o
       const created = await onCreate({ slug: newSlug, name: newName });
       setNewSlug(''); setNewName(''); setCreating(false);
       setSelected(created?.slug || newSlug);
-      onNotice(`Created ${created?.name || newName}.`);
+      onNotice?.(`Created ${created?.name || newName}.`);
     } catch (e) {
-      setError(e.message || 'Could not create the page.');
+      setError((e as Error).message || 'Could not create the page.');
     } finally {
       setBusy(false);
     }
@@ -550,13 +678,13 @@ export default function MarketingEditor({ payload, onSave, onCreate, onDelete, o
                   </p>
                 )}
                 {sections.map((section, index) => {
-                  const definition = schema[section.type];
+                  const definition = schema[String(section.type)];
                   if (!definition) {
                     // Should be unreachable: the backend refuses unknown types on
                     // write, and a page loaded from the API passed through it.
                     return (
                       <div className="alert alert-error" key={index}>
-                        Section {index + 1} has an unrecognised type “{section.type}” and
+                        Section {index + 1} has an unrecognised type “{String(section.type)}” and
                         cannot be shown here.
                         <button
                           type="button"
@@ -568,7 +696,7 @@ export default function MarketingEditor({ payload, onSave, onCreate, onDelete, o
                   }
                   return (
                     <SectionEditor
-                      key={`${section.type}-${index}`}
+                      key={`${String(section.type)}-${index}`}
                       section={section}
                       definition={definition}
                       index={index}
@@ -647,7 +775,7 @@ export default function MarketingEditor({ payload, onSave, onCreate, onDelete, o
               Without it the preview would miss every rule scoped to that wrapper
               and show different colours from the real site. */}
           <div className="marketing-preview-frame ledger-page">
-            {page && <MarketingSections content={preview} />}
+            {page && <MarketingSections content={preview as never} />}
             {page && !sections.length && (
               <p className="me-hint">Nothing to preview — this page has no sections.</p>
             )}

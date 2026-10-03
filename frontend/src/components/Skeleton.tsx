@@ -1,4 +1,11 @@
-export function Skeleton({ width = '100%', height = 16, radius = 8, className = '' }) {
+interface SkeletonProps {
+  width?: string | number;
+  height?: number;
+  radius?: number;
+  className?: string;
+}
+
+export function Skeleton({ width = '100%', height = 16, radius = 8, className = '' }: SkeletonProps) {
   return (
     <div
       className={`skeleton ${className}`}
@@ -8,7 +15,11 @@ export function Skeleton({ width = '100%', height = 16, radius = 8, className = 
   );
 }
 
-export function SkeletonCard({ lines = 3 }) {
+interface SkeletonCardProps {
+  lines?: number;
+}
+
+export function SkeletonCard({ lines = 3 }: SkeletonCardProps) {
   return (
     <div className="skeleton-card">
       <Skeleton height={20} width="40%" />
@@ -19,7 +30,12 @@ export function SkeletonCard({ lines = 3 }) {
   );
 }
 
-export function SkeletonTable({ rows = 5, cols = 4 }) {
+interface SkeletonTableProps {
+  rows?: number;
+  cols?: number;
+}
+
+export function SkeletonTable({ rows = 5, cols = 4 }: SkeletonTableProps) {
   return (
     <div className="skeleton-table">
       <div className="skeleton-table-head">
@@ -38,7 +54,11 @@ export function SkeletonTable({ rows = 5, cols = 4 }) {
   );
 }
 
-export function SkeletonStats({ count = 4 }) {
+interface SkeletonStatsProps {
+  count?: number;
+}
+
+export function SkeletonStats({ count = 4 }: SkeletonStatsProps) {
   return (
     <div className="skeleton-stats">
       {Array.from({ length: count }).map((_, i) => (

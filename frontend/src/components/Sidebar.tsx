@@ -3,7 +3,20 @@ import { useAuth } from '../context/AuthContext';
 import { KNOWLEDGE_MANAGER_ROLES } from '../constants/roles';
 import Icon from './Icon';
 
-const GROUPS = [
+interface NavLinkItem {
+  to: string;
+  label: string;
+  icon: string;
+  end?: boolean;
+  roles?: string[];
+}
+
+interface NavGroup {
+  title: string;
+  links: NavLinkItem[];
+}
+
+const GROUPS: NavGroup[] = [
   { title: 'Overview', links: [
     { to: '/dashboard', label: 'Dashboard', icon: 'grid', end: true },
     { to: '/ai', label: 'AI Copilot', icon: 'sparkles' },
@@ -38,7 +51,11 @@ const GROUPS = [
   ]},
 ];
 
-export default function Sidebar({ onNavigate }) {
+interface SidebarProps {
+  onNavigate?: () => void;
+}
+
+export default function Sidebar({ onNavigate }: SidebarProps) {
   const { user } = useAuth();
   const role = user?.role;
 
@@ -52,7 +69,7 @@ export default function Sidebar({ onNavigate }) {
         <span className="brand-mark">H</span>
         <span>HR<span>CloudPay</span></span>
       </Link>
-            <div className="workspace">
+      <div className="workspace">
         {user?.company?.logo_url ? (
           <img className="workspace-logo" src={user?.company?.logo_url} alt={`${user?.company?.name} logo`} />
         ) : (
@@ -68,7 +85,7 @@ export default function Sidebar({ onNavigate }) {
           <div className="nav-group" key={group.title}>
             <div className="nav-label">{group.title}</div>
             {group.links
-              .filter((l) => !l.roles || l.roles.includes(role))
+              .filter((l) => !l.roles || l.roles.includes(role || ''))
               .map((link) => (
                 <NavLink
                   key={link.to}
@@ -100,7 +117,7 @@ export default function Sidebar({ onNavigate }) {
       <div className="sidebar-bottom">
         <NavLink to="/billing" className="sidebar-link" onClick={handleNav}>
           <Icon name="wallet" />
-          <span>Plans &amp; billing</span>
+          <span>Plans & billing</span>
         </NavLink>
         <div className="upgrade-card">
           <strong>Ready to grow?</strong>

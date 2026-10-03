@@ -6,7 +6,15 @@
  * a department manager access to a knowledge document, and hid the Knowledge
  * Center nav link from every real manager. Keep it in step with the backend.
  */
-export const COMPANY_ROLES = [
+export type CompanyRole =
+  | 'owner'
+  | 'admin'
+  | 'hr'
+  | 'finance'
+  | 'department_manager'
+  | 'employee';
+
+export const COMPANY_ROLES: CompanyRole[] = [
   'owner',
   'admin',
   'hr',
@@ -16,7 +24,7 @@ export const COMPANY_ROLES = [
 ];
 
 /** Friendly labels for the access checkboxes. */
-export const ROLE_LABELS = {
+export const ROLE_LABELS: Record<CompanyRole, string> = {
   owner: 'Owner',
   admin: 'Admin',
   hr: 'HR manager',
@@ -26,13 +34,16 @@ export const ROLE_LABELS = {
 };
 
 /** Roles that may manage company knowledge documents. */
-export const KNOWLEDGE_MANAGER_ROLES = ['owner', 'admin', 'hr'];
+export const KNOWLEDGE_MANAGER_ROLES: CompanyRole[] = ['owner', 'admin', 'hr'];
 
 /** Roles that may generate, read and review AI drafts. */
-export const DRAFT_MANAGER_ROLES = ['owner', 'admin', 'hr', 'finance'];
+export const DRAFT_MANAGER_ROLES: CompanyRole[] = ['owner', 'admin', 'hr', 'finance'];
 
-export const hasRole = (role, allowed) => Boolean(role) && allowed.includes(role);
+export const hasRole = (role: string | undefined, allowed: string[]): boolean =>
+  Boolean(role) && allowed.includes(role as string);
 
-export const canManageKnowledge = (role) => hasRole(role, KNOWLEDGE_MANAGER_ROLES);
+export const canManageKnowledge = (role: string | undefined): boolean =>
+  hasRole(role, KNOWLEDGE_MANAGER_ROLES);
 
-export const canManageDrafts = (role) => hasRole(role, DRAFT_MANAGER_ROLES);
+export const canManageDrafts = (role: string | undefined): boolean =>
+  hasRole(role, DRAFT_MANAGER_ROLES);

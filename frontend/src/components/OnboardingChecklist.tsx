@@ -1,30 +1,44 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import Icon from './Icon';
 
 const STORAGE_KEY = 'hrcloudpay_onboarding_dismissed';
 
-export default function OnboardingChecklist({ employeeCount = 0, hasIntegrations = false }) {
+interface OnboardingChecklistProps {
+  employeeCount?: number;
+  hasIntegrations?: boolean;
+}
+
+interface Step {
+  id: string;
+  label: string;
+  done: boolean;
+  to: string | null;
+  hint: string;
+  optional?: boolean;
+}
+
+export default function OnboardingChecklist({ employeeCount = 0, hasIntegrations = false }: OnboardingChecklistProps) {
   const { user } = useAuth();
   const [dismissed, setDismissed] = useState(() => {
     try { return localStorage.getItem(STORAGE_KEY) === '1'; } catch { return false; }
   });
 
-  const steps = useMemo(() => {
+  const steps = useMemo<Step[]>(() => {
     const company = user?.company || {};
     return [
       {
         id: 'activated',
         label: 'Activate company account',
-        done: !!company.is_active,
+        done: !!(company as Record<string, unknown>).is_active,
         to: null,
         hint: 'Use the activation link emailed to your company address, or ask a platform admin.',
       },
       {
         id: 'payroll',
         label: 'Complete payroll setup',
-        done: !!company.payroll_configured,
+        done: !!(company as Record<string, unknown>).payroll_configured,
         to: '/payroll-setup',
         hint: 'Tax brackets, contributions and currency.',
       },

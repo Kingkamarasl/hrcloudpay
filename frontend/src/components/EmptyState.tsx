@@ -1,6 +1,17 @@
 import Icon from './Icon';
 import { Link } from 'react-router-dom';
 
+interface EmptyStateProps {
+  icon?: string;
+  title?: string;
+  description?: string;
+  actionLabel?: string;
+  actionTo?: string;
+  onAction?: () => void;
+  secondaryLabel?: string;
+  secondaryTo?: string;
+}
+
 export default function EmptyState({
   icon = 'file',
   title = 'Nothing here yet',
@@ -10,7 +21,7 @@ export default function EmptyState({
   onAction,
   secondaryLabel,
   secondaryTo,
-}) {
+}: EmptyStateProps) {
   return (
     <div className="empty-state">
       <div className="empty-state-icon">

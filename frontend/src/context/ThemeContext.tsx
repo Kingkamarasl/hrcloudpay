@@ -1,20 +1,31 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
-const ThemeContext = createContext(null);
+type Theme = 'light' | 'dark';
 
-function getInitialTheme() {
+interface ThemeContextType {
+  theme: Theme;
+  isDark: boolean;
+  toggle: () => void;
+  setTheme: (theme: Theme) => void;
+}
+
+const ThemeContext = createContext<ThemeContextType | null>(null);
+
+function getInitialTheme(): Theme {
   try {
     const stored = localStorage.getItem('hrcloudpay_theme');
     if (stored === 'dark' || stored === 'light') return stored;
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   if (typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches) {
     return 'dark';
   }
   return 'light';
 }
 
-export function ThemeProvider({ children }) {
-  const [theme, setTheme] = useState(getInitialTheme);
+export function ThemeProvider({ children }: { children: ReactNode }) {
+  const [theme, setTheme] = useState<Theme>(getInitialTheme);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -31,7 +42,7 @@ export function ThemeProvider({ children }) {
   return <ThemeContext.Provider value={api}>{children}</ThemeContext.Provider>;
 }
 
-export function useTheme() {
+export function useTheme(): ThemeContextType {
   const ctx = useContext(ThemeContext);
   if (!ctx) throw new Error('useTheme must be used within ThemeProvider');
   return ctx;

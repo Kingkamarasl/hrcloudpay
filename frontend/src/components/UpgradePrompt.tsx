@@ -2,11 +2,17 @@ import { Link } from 'react-router-dom';
 import Icon from './Icon';
 import { AI_MINIMUM_PLAN, PLAN_LABELS } from '../constants/plans';
 
+interface UpgradePromptProps {
+  feature?: string;
+  requiredPlan?: string;
+  compact?: boolean;
+}
+
 export default function UpgradePrompt({
   feature = 'this feature',
   requiredPlan = AI_MINIMUM_PLAN,
   compact = false,
-}) {
+}: UpgradePromptProps) {
   const planName = PLAN_LABELS[requiredPlan] || requiredPlan;
 
   if (compact) {
@@ -16,7 +22,9 @@ export default function UpgradePrompt({
         <span>
           {feature} requires the <strong>{planName}</strong> plan or higher.
         </span>
-        <Link to="/billing" className="btn-link">Upgrade</Link>
+        <Link to="/billing" className="btn-link">
+          Upgrade
+        </Link>
       </div>
     );
   }
@@ -33,7 +41,7 @@ export default function UpgradePrompt({
           Upgrade to get full access for your team.
         </p>
         <Link to="/billing" className="btn btn-primary" style={{ width: 'auto' }}>
-          View plans &amp; upgrade
+          View plans & upgrade
         </Link>
       </div>
     </div>

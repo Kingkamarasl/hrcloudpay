@@ -16,11 +16,50 @@
 // makes rendering them as links safe. It is a write-time guarantee, so these
 // components do not repeat the check.
 
+import type { ReactNode } from 'react';
+
+/** A managed section. Field sets vary per `type`, so this is intentionally permissive. */
+export interface ManagedSection {
+  type?: string;
+  eyebrow?: string;
+  title?: string;
+  title_accent?: string;
+  subtitle?: string;
+  body?: string;
+  primary_cta?: string;
+  primary_href?: string;
+  secondary_cta?: string;
+  secondary_href?: string;
+  items?: Array<Record<string, string | undefined>>;
+  blocks?: Array<{ title?: string; body?: string }>;
+  plans?: Array<{
+    name?: string;
+    price?: string;
+    blurb?: string;
+    highlight?: boolean;
+    features?: string[];
+  }>;
+  notes?: Array<{ title?: string; body?: string }>;
+  actions?: Array<{ label?: string; href?: string }>;
+  [key: string]: unknown;
+}
+
+export interface ManagedContent {
+  sections?: ManagedSection[];
+  [key: string]: unknown;
+}
+
+interface ManagedLinkProps {
+  href?: string;
+  className?: string;
+  children: ReactNode;
+}
+
 // Internal links go through the router so the SPA does not reload. External
 // links get rel="noopener noreferrer" because a managed link can point at
 // another origin, and target="_blank" without it hands that page a live
 // reference to this one.
-function ManagedLink({ href, className, children }) {
+function ManagedLink({ href, className, children }: ManagedLinkProps) {
   if (!href) return null;
   const internal = href.startsWith('/');
   if (internal) {
@@ -33,7 +72,7 @@ function ManagedLink({ href, className, children }) {
   );
 }
 
-function Hero({ section }) {
+function Hero({ section }: { section: ManagedSection }) {
   const {
     eyebrow, title, title_accent: accent, subtitle,
     primary_cta: primaryCta, primary_href: primaryHref,
@@ -64,7 +103,7 @@ function Hero({ section }) {
   );
 }
 
-function FeatureRows({ section }) {
+function FeatureRows({ section }: { section: ManagedSection }) {
   const { eyebrow, title, subtitle, items } = section;
   const rows = items || [];
   if (!rows.length) return null;
@@ -89,7 +128,7 @@ function FeatureRows({ section }) {
   );
 }
 
-function Checklist({ section }) {
+function Checklist({ section }: { section: ManagedSection }) {
   const { eyebrow, title, body, items } = section;
   const rows = items || [];
   if (!rows.length) return null;
@@ -107,7 +146,7 @@ function Checklist({ section }) {
   );
 }
 
-function ProseBlocks({ section }) {
+function ProseBlocks({ section }: { section: ManagedSection }) {
   const { eyebrow, blocks } = section;
   const rows = blocks || [];
   if (!rows.length) return null;
@@ -124,7 +163,7 @@ function ProseBlocks({ section }) {
   );
 }
 
-function Pricing({ section }) {
+function Pricing({ section }: { section: ManagedSection }) {
   const { title, subtitle, plans, notes } = section;
   const rows = plans || [];
   if (!rows.length) return null;
@@ -167,7 +206,7 @@ function Pricing({ section }) {
           ))}
         </div>
       </div>
-      {(notes || []).length > 0 && (
+      {notes && notes.length > 0 && (
         <div className="ledger-pricing-note">
           <div className="ledger-pricing-note-inner">
             {notes.map((note, index) => (
@@ -183,7 +222,7 @@ function Pricing({ section }) {
   );
 }
 
-function Cta({ section }) {
+function Cta({ section }: { section: ManagedSection }) {
   const { eyebrow, title, actions } = section;
   const buttons = (actions || []).filter((action) => action.label);
   if (!buttons.length) return null;
@@ -212,7 +251,7 @@ function Cta({ section }) {
   );
 }
 
-export function MarketingSection({ section }) {
+export function MarketingSection({ section }: { section: ManagedSection }) {
   switch (section.type) {
     case 'hero':
       return <Hero section={section} />;
@@ -233,12 +272,17 @@ export function MarketingSection({ section }) {
   }
 }
 
+interface MarketingSectionsProps {
+  content?: ManagedContent;
+  only?: string[];
+}
+
 // Renders a page's sections in the order the admin arranged them. This is what
 // makes reordering a real operation rather than a cosmetic one.
-export function MarketingSections({ content, only }) {
+export function MarketingSections({ content, only }: MarketingSectionsProps) {
   const sections = (content && content.sections) || [];
   const visible = only
-    ? sections.filter((section) => only.includes(section.type))
+    ? sections.filter((section) => only.includes(section.type || ''))
     : sections;
   if (!visible.length) return null;
   return (
@@ -250,15 +294,19 @@ export function MarketingSections({ content, only }) {
   );
 }
 
+function sectionsOf(content?: ManagedContent): ManagedSection[] {
+  return (content && content.sections) || [];
+}
+
 // The first section of a given type, spread over a set of defaults. Used by
 // `home` and `security`, which manage their hero but keep bespoke layouts for
 // everything below it, so a page with no managed content still renders the copy
 // that shipped in its JSX.
-export function managedSection(content, type, defaults) {
+export function managedSection(
+  content: ManagedContent | undefined,
+  type: string,
+  defaults: ManagedSection,
+): ManagedSection {
   const section = (sectionsOf(content) || []).find((s) => s.type === type) || {};
   return { ...defaults, ...section };
-}
-
-function sectionsOf(content) {
-  return (content && content.sections) || [];
 }

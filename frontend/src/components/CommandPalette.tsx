@@ -3,7 +3,16 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import Icon from './Icon';
 
-const PAGES = [
+interface PageItem {
+  id: string;
+  label: string;
+  to: string;
+  icon: string;
+  keywords: string;
+  staffOnly?: boolean;
+}
+
+const PAGES: PageItem[] = [
   { id: 'dashboard', label: 'Dashboard', to: '/dashboard', icon: 'grid', keywords: 'home overview' },
   { id: 'employees', label: 'Employees', to: '/employees', icon: 'users', keywords: 'staff people' },
   { id: 'departments', label: 'Departments', to: '/departments', icon: 'building', keywords: 'teams org' },
@@ -21,12 +30,17 @@ const PAGES = [
   { id: 'platform', label: 'Platform admin', to: '/platform-admin', icon: 'settings', keywords: 'admin companies', staffOnly: true },
 ];
 
-export default function CommandPalette({ open, onClose }) {
+interface CommandPaletteProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
-  const inputRef = useRef(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const items = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -55,7 +69,7 @@ export default function CommandPalette({ open, onClose }) {
 
   useEffect(() => {
     if (!open) return undefined;
-    const onKey = (e) => {
+    const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
         onClose();
@@ -74,7 +88,7 @@ export default function CommandPalette({ open, onClose }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [open, items, active, onClose]);
 
-  function go(item) {
+  function go(item: PageItem) {
     if (!item) return;
     navigate(item.to);
     onClose();

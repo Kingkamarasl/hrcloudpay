@@ -1,6 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
 
+interface Employee {
+  id: number;
+  full_name?: string;
+  first_name?: string;
+  last_name?: string;
+  id_card_no?: string;
+  employee_code?: string;
+  job_title?: string;
+}
+
+interface EmployeePickerProps {
+  value?: number | string | null;
+  onChange?: (id: number | string, employee: Employee | null) => void;
+  required?: boolean;
+  placeholder?: string;
+  disabled?: boolean;
+}
+
 /**
  * Searchable employee selector.
  * Matches id card no, employee code, name, email (API ?q=).
@@ -11,18 +29,18 @@ export default function EmployeePicker({
   required = false,
   placeholder = 'Search by ID no, code, or name…',
   disabled = false,
-}) {
+}: EmployeePickerProps) {
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState([]);
+  const [results, setResults] = useState<Employee[]>([]);
   const [open, setOpen] = useState(false);
-  const [selected, setSelected] = useState(null);
+  const [selected, setSelected] = useState<Employee | null>(null);
   const [loading, setLoading] = useState(false);
-  const boxRef = useRef(null);
-  const timer = useRef(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    function onDoc(e) {
-      if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false);
+    function onDoc(e: MouseEvent) {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
     }
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
@@ -36,7 +54,7 @@ export default function EmployeePicker({
     }
     if (selected && String(selected.id) === String(value)) return;
     let cancelled = false;
-    api.get(`/employees/employees/${value}/`)
+    api.get<Employee>(`/employees/employees/${value}/`)
       .then((emp) => {
         if (!cancelled) {
           setSelected(emp);
@@ -47,14 +65,14 @@ export default function EmployeePicker({
     return () => { cancelled = true; };
   }, [value]);
 
-  function label(emp) {
+  function label(emp: Employee | null) {
     if (!emp) return '';
     const name = emp.full_name || `${emp.first_name || ''} ${emp.last_name || ''}`.trim();
     const id = emp.id_card_no || emp.employee_code || '';
     return id ? `${name} · ${id}` : name;
   }
 
-  function search(q) {
+  function search(q: string) {
     setQuery(q);
     setOpen(true);
     if (timer.current) clearTimeout(timer.current);
@@ -65,8 +83,8 @@ export default function EmployeePicker({
     timer.current = setTimeout(async () => {
       setLoading(true);
       try {
-        const data = await api.get(`/employees/employees/?q=${encodeURIComponent(q.trim())}`);
-        const list = data.results ?? data;
+        const data = await api.get<{ results?: Employee[] } | Employee[]>(`/employees/employees/?q=${encodeURIComponent(q.trim())}`);
+        const list = Array.isArray(data) ? data : (data?.results ?? []);
         setResults(Array.isArray(list) ? list.slice(0, 25) : []);
       } catch {
         setResults([]);
@@ -76,7 +94,7 @@ export default function EmployeePicker({
     }, 250);
   }
 
-  function choose(emp) {
+  function choose(emp: Employee) {
     setSelected(emp);
     setQuery(label(emp));
     setOpen(false);

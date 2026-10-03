@@ -5,16 +5,21 @@ import { useTheme } from '../context/ThemeContext';
 import { api } from '../api/client';
 import Icon from './Icon';
 
-export default function Navbar({ onMenuClick, onSearchClick }) {
+interface NavbarProps {
+  onMenuClick: () => void;
+  onSearchClick: () => void;
+}
+
+export default function Navbar({ onMenuClick, onSearchClick }: NavbarProps) {
   const { user, logout } = useAuth();
   const { theme, toggle } = useTheme();
   const [count, setCount] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let alive = true;
-    api.get('/workflows/notifications/unread_count/')
+    api.get<{ count: number }>('/workflows/notifications/unread_count/')
       .then((x) => alive && setCount(x.count || 0))
       .catch(() => {});
     return () => { alive = false; };
@@ -22,8 +27,8 @@ export default function Navbar({ onMenuClick, onSearchClick }) {
 
   useEffect(() => {
     if (!menuOpen) return undefined;
-    const onDoc = (e) => {
-      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false);
+    const onDoc = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
     };
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
@@ -59,7 +64,7 @@ export default function Navbar({ onMenuClick, onSearchClick }) {
             <div className="avatar">{initials}</div>
             <div className="user-meta">
               <strong>{user?.username || 'User'}</strong>
-              <small>{user?.role?.replaceAll('_', ' ') || 'Member'} · {plan}</small>
+              <small>{user?.role?.split('_').join(' ') || 'Member'} · {plan}</small>
             </div>
             <Icon name="chevron" size={14} />
           </button>
@@ -70,16 +75,16 @@ export default function Navbar({ onMenuClick, onSearchClick }) {
                 <small>{user?.email || user?.company?.name}</small>
               </div>
               <Link to="/team" className="user-dropdown-item" onClick={() => setMenuOpen(false)}>
-                <Icon name="user" size={16} /> Profile &amp; team
+                <Icon name="user" size={16} /> Profile & team
               </Link>
               <Link to="/billing" className="user-dropdown-item" onClick={() => setMenuOpen(false)}>
                 <Icon name="wallet" size={16} /> Billing
               </Link>
-                            <Link to="/payroll-setup" className="user-dropdown-item" onClick={() => setMenuOpen(false)}>
+              <Link to="/payroll-setup" className="user-dropdown-item" onClick={() => setMenuOpen(false)}>
                 <Icon name="settings" size={16} /> Payroll settings
               </Link>
               <Link to="/company-settings" className="user-dropdown-item" onClick={() => setMenuOpen(false)}>
-                <Icon name="building" size={16} /> Company profile &amp; logo
+                <Icon name="building" size={16} /> Company profile & logo
               </Link>
               <button type="button" className="user-dropdown-item" onClick={() => { setMenuOpen(false); toggle(); }}>
                 <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={16} />
