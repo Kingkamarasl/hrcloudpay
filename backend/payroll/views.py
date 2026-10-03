@@ -355,6 +355,12 @@ from django.core.mail import EmailMessage
 from django.conf import settings
 from rest_framework.decorators import api_view, permission_classes
 from .models import OvertimeRule, OvertimeEntry, SalaryAdvance
+from .overtime import (
+    classify_day_type,
+    overtime_amount,
+    sync_overtime_from_attendance,
+)
+from datetime import date as date_cls
 from .pdf import build_payslip_pdf
 from .serializers import PayslipSerializer
 from decimal import Decimal
@@ -506,6 +512,7 @@ class OvertimeRuleView(APIView):
             'weekend_multiplier': str(rule.weekend_multiplier),
             'holiday_multiplier': str(rule.holiday_multiplier),
             'standard_hours_per_month': str(rule.standard_hours_per_month),
+            'standard_hours_per_day': str(rule.standard_hours_per_day),
         })
 
     def put(self, request):
@@ -513,9 +520,14 @@ class OvertimeRuleView(APIView):
         if not ok:
             return resp
         rule, _ = OvertimeRule.objects.get_or_create(company=request.user.company)
-        for field in ('weekday_multiplier', 'weekend_multiplier', 'holiday_multiplier', 'standard_hours_per_month'):
+        for field in ('weekday_multiplier', 'weekend_multiplier', 'holiday_multiplier',
+                      'standard_hours_per_month', 'standard_hours_per_day'):
             if field in request.data:
-                setattr(rule, field, Decimal(str(request.data[field])))
+                value = Decimal(str(request.data[field]))
+                if value <= 0:
+                    return Response(
+                        {field: 'Must be greater than zero.'}, status=400)
+                setattr(rule, field, value)
         rule.save()
         return self.get(request)
 
@@ -546,35 +558,67 @@ class OvertimeEntryListCreateView(APIView):
         if hours <= 0:
             return Response({'detail': 'Overtime hours must be greater than zero.'}, status=400)
         work_date = request.data.get('work_date')
-        day_type = request.data.get('day_type') or ''
-        if not day_type and work_date:
-            from datetime import date as date_cls
-            from .models import PublicHoliday
-            try:
-                d = work_date if hasattr(work_date, 'weekday') else date_cls.fromisoformat(str(work_date))
-            except ValueError:
-                return Response({'detail': 'work_date must be YYYY-MM-DD.'}, status=400)
-            if PublicHoliday.objects.filter(company=company, date=d).exists():
-                day_type = 'holiday'
-            elif d.weekday() >= 5:
-                day_type = 'weekend'
-            else:
-                day_type = 'weekday'
-        day_type = day_type or 'weekday'
-        mult = {
-            'weekday': rule.weekday_multiplier,
-            'weekend': rule.weekend_multiplier,
-            'holiday': rule.holiday_multiplier,
-        }.get(day_type, rule.weekday_multiplier)
-        hourly = (emp.base_salary / rule.standard_hours_per_month) if rule.standard_hours_per_month else Decimal('0')
-        amount = (hourly * hours * mult).quantize(Decimal('0.01'))
+        if not work_date:
+            return Response({'detail': 'work_date is required.'}, status=400)
+        try:
+            parsed_date = (
+                work_date if hasattr(work_date, 'weekday')
+                else date_cls.fromisoformat(str(work_date))
+            )
+        except ValueError:
+            return Response({'detail': 'work_date must be YYYY-MM-DD.'}, status=400)
+        # Classification and arithmetic live in payroll.overtime so the manual
+        # form and the attendance sync cannot disagree about what a Sunday is
+        # worth.
+        day_type = classify_day_type(company, parsed_date, request.data.get('day_type') or None)
+        amount = overtime_amount(emp, rule, hours, day_type)
         entry = OvertimeEntry.objects.create(
             company=company, employee=emp,
-            work_date=work_date,
+            work_date=parsed_date,
             hours=hours, day_type=day_type, amount=amount,
             notes=request.data.get('notes', ''),
         )
         return Response({'id': entry.id, 'amount': str(entry.amount)}, status=201)
+
+
+class OvertimeSyncFromAttendanceView(APIView):
+    """Turn attendance that ran past the standard day into overtime entries.
+
+    Creates OvertimeEntry rows rather than altering the payslip calculation, so
+    payroll can review, edit or delete what it produced. Idempotent: a date
+    that already has an entry is skipped, so calling this twice cannot pay the
+    same overtime twice.
+    """
+
+    permission_classes = [IsCompanyMember, IsCompanyActive, CanManagePayroll]
+
+    def post(self, request):
+        ok, resp = _feature_or_403('payroll_overtime', request.user.company)
+        if not ok:
+            return resp
+        from datetime import date as date_cls
+        from employees.models import Employee
+
+        company = request.user.company
+        try:
+            period_start = date_cls.fromisoformat(str(request.data.get('period_start', '')))
+            period_end = date_cls.fromisoformat(str(request.data.get('period_end', '')))
+        except ValueError:
+            return Response(
+                {'detail': 'period_start and period_end are required as YYYY-MM-DD.'},
+                status=400,
+            )
+        if period_end < period_start:
+            return Response({'detail': 'period_end is before period_start.'}, status=400)
+
+        employee = None
+        if request.data.get('employee_id'):
+            employee = get_object_or_404(
+                Employee, id=request.data['employee_id'], company=company)
+
+        summary = sync_overtime_from_attendance(
+            company, period_start, period_end, employee=employee)
+        return Response(summary, status=201)
 
 
 class SalaryAdvanceListCreateView(APIView):

@@ -6,6 +6,7 @@ from .views import (
     PayrollExportView, PayrollRunViewSet, PayrollSummaryView, PayslipViewSet, ProcessPayrollRunView,
     EmailPayslipsView, BankFileExportView, ComparePayrollRunsView,
     OvertimeRuleView, OvertimeEntryListCreateView, SalaryAdvanceListCreateView, PublicHolidayListCreateView,
+    OvertimeSyncFromAttendanceView,
 )
 
 router = DefaultRouter()
@@ -22,6 +23,7 @@ urlpatterns = [
     path('compare/', ComparePayrollRunsView.as_view(), name='compare-runs'),
     path('overtime/rules/', OvertimeRuleView.as_view(), name='overtime-rules'),
     path('overtime/entries/', OvertimeEntryListCreateView.as_view(), name='overtime-entries'),
+    path('overtime/sync-from-attendance/', OvertimeSyncFromAttendanceView.as_view(), name='overtime-sync-from-attendance'),
     path('advances/', SalaryAdvanceListCreateView.as_view(), name='salary-advances'),
     path('holidays/', PublicHolidayListCreateView.as_view(), name='public-holidays'),
     path('export/', PayrollExportView.as_view(), name='payroll-export'),

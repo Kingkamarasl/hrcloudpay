@@ -146,6 +146,12 @@ class OvertimeRule(models.Model):
     holiday_multiplier = models.DecimalField(max_digits=5, decimal_places=2, default=2.0)
     # Hourly rate base: annual salary / (days * hours) approx from monthly base
     standard_hours_per_month = models.DecimalField(max_digits=6, decimal_places=2, default=173)
+    # The daily equivalent, and the threshold attendance is measured against.
+    # Needed because Attendance.worked_minutes is time on the clock while
+    # OvertimeEntry.hours is time paid at a premium - the two are different
+    # quantities, and the standard day is what separates them. 173/month over
+    # ~21.6 working days is the same 8 hours, so the defaults stay consistent.
+    standard_hours_per_day = models.DecimalField(max_digits=5, decimal_places=2, default=8)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
