@@ -34,6 +34,30 @@ from django.urls import (
 )
 from rest_framework.routers import APIRootView
 
+# Every extension that can carry a frontend API call.
+#
+# This had to grow when components were migrated to TypeScript. The filter was
+# ``(".js", ".jsx")``, so each ``.tsx``/``.ts`` file was skipped silently - the
+# guard these tests exist to provide quietly stopped covering code, and the
+# class of bug in this module's docstring (an ``AuditLogs.jsx`` requesting a
+# route that does not exist, rendering an empty page while every test passed)
+# would have come back with nothing watching for it.
+FRONTEND_SOURCE_SUFFIXES = (".js", ".jsx", ".ts", ".tsx")
+
+# Unit tests are app code's *doubles*, not the app. They call made-up endpoints
+# against a mocked ``fetch`` (``api.get('/test/')``), so requiring those to
+# resolve against the real URLconf would be nonsense - and it fails the moment a
+# test suite is written, which is the wrong time to learn the contract is not
+# supposed to look here.
+FRONTEND_TEST_RE = re.compile(r"(^|[\\/])tests?[\\/]|\.(test|spec)\.[jt]sx?$")
+
+
+def is_app_source(path):
+    """True for frontend files whose API calls are real application traffic."""
+    if path.suffix not in FRONTEND_SOURCE_SUFFIXES or not path.is_file():
+        return False
+    return not FRONTEND_TEST_RE.search(str(path))
+
 # Verbs the API client exposes. ``upload``/``downloadFile`` take the same
 # ``(path, ...)`` shape as the rest.
 API_CALL_RE = re.compile(
@@ -208,7 +232,7 @@ class FrontendBackendApiContractTests(SimpleTestCase):
         unresolved = []
         checked = 0
         for path in sorted(frontend_root().rglob("*")):
-            if path.suffix not in (".js", ".jsx") or not path.is_file():
+            if not is_app_source(path):
                 continue
             source = path.read_text(encoding="utf-8")
             for match in API_CALL_RE.finditer(source):
@@ -342,7 +366,7 @@ class RouterRootMisuseTests(SimpleTestCase):
 
         offenders = []
         for path in sorted(frontend_root().rglob("*")):
-            if path.suffix not in (".js", ".jsx") or not path.is_file():
+            if not is_app_source(path):
                 continue
             source = path.read_text(encoding="utf-8")
             for match in API_CALL_RE.finditer(source):

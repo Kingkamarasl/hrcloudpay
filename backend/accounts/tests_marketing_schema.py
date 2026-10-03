@@ -309,8 +309,14 @@ class SectionTypeParityTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        renderer = FRONTEND / 'components' / 'MarketingSections.jsx'
-        if not renderer.exists():
+        # The renderer was migrated from ``.jsx`` to ``.tsx``; accept either so
+        # the parity check keeps running across that rename.
+        renderer = next(
+            (p for suffix in ('.tsx', '.jsx', '.ts', '.js')
+             if (p := FRONTEND / 'components' / f'MarketingSections{suffix}').exists()),
+            None,
+        )
+        if renderer is None:
             raise unittest.SkipTest('frontend section renderer not present')
         cls.source = renderer.read_text(encoding='utf-8')
 

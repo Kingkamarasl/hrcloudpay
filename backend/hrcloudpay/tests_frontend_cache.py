@@ -122,8 +122,16 @@ class HashedAssetsMayBeCachedForeverTests(SimpleTestCase):
         assets = Path(settings.BASE_DIR) / 'frontend_dist' / 'assets'
         if not assets.is_dir():
             self.skipTest('no frontend build present')
-        hashed = re.compile(r'^index-[A-Za-z0-9_-]{8,}\.(js|css)$')
-        built = [p.name for p in assets.iterdir() if p.suffix in ('.js', '.css')]
+        # Any ``<name>-<hash>.<ext>``, not just ``index-``. Route-level code
+        # splitting means the build also emits one chunk per lazily-loaded page
+        # (Payroll-ZTcWRF-b.js, Home-CNHpWL.js), and those carry content hashes
+        # exactly like the entry chunk does. This regex used to be anchored on
+        # ``index-``, so enabling code splitting made it report all 42 chunks as
+        # unhashed - i.e. it flagged correct output rather than catching a
+        # regression. Mirrors settings.WHITENOISE_IMMUTABLE_FILE_TEST, which is
+        # what actually decides the year-long cache.
+        hashed = re.compile(r'^.+-[A-Za-z0-9_-]{8,}\.(?:js|mjs|css)$')
+        built = [p.name for p in assets.iterdir() if p.suffix in ('.js', '.mjs', '.css')]
         if not built:
             self.skipTest('no built assets to check')
         unhashed = [n for n in built if not hashed.match(n)]

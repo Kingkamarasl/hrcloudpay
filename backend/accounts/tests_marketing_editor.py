@@ -24,8 +24,27 @@ import tempfile
 import unittest
 
 FRONTEND_SRC = pathlib.Path(__file__).resolve().parents[2] / 'frontend' / 'src'
-EDITOR = FRONTEND_SRC / 'components' / 'MarketingEditor.jsx'
-SECTIONS = FRONTEND_SRC / 'components' / 'MarketingSections.jsx'
+
+
+def _component(name):
+    """Resolve a component by name, whichever extension it currently uses.
+
+    These components were migrated from ``.jsx`` to ``.tsx``. Pinning the
+    extension here made every test below fail on a file that had simply been
+    renamed - which is the same failure mode as a test that stops running when
+    the code moves: the guard goes quiet instead of reporting something real.
+    """
+    for suffix in ('.tsx', '.jsx', '.ts', '.js'):
+        candidate = FRONTEND_SRC / 'components' / f'{name}{suffix}'
+        if candidate.exists():
+            return candidate
+    # Fall back to the current name so a missing component produces this
+    # module's own assertion message rather than a bare FileNotFoundError.
+    return FRONTEND_SRC / 'components' / f'{name}.tsx'
+
+
+EDITOR = _component('MarketingEditor')
+SECTIONS = _component('MarketingSections')
 STYLESHEET = FRONTEND_SRC / 'index.css'
 
 # The same table the schema tests use. If the front end accepts one of these,

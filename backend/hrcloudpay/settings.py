@@ -538,7 +538,19 @@ CONNECTION_REFRESH_MIN_INTERVAL_SECONDS = config('CONNECTION_REFRESH_MIN_INTERVA
 
 # Production security defaults. Keep local HTTP development usable when DEBUG=True.
 if not DEBUG:
-    SECURE_SSL_REDIRECT = True
+    # Deliberately its own setting rather than an unconditional True.
+    #
+    # Behind a TLS-terminating proxy this is already a no-op: SECURE_PROXY_SSL_HEADER
+    # below makes every forwarded request look like https, so the middleware sees
+    # nothing to redirect. It only bites where there is no proxy and the client
+    # speaks plain http - which is exactly the test suite, where Django's test
+    # client talks http to `testserver` and sends no X-Forwarded-Proto.
+    #
+    # Deriving it from DEBUG meant the one configuration CI could run in (DEBUG
+    # off, matching production) turned every API assertion into a 301. That is
+    # 300+ tests failing for a reason that has nothing to do with the code under
+    # test, which is the worst kind of red build: it hides real failures.
+    SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', default=True, cast=bool)
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SESSION_COOKIE_HTTPONLY = True

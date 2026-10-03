@@ -67,6 +67,22 @@ SRC_DIR = REPO_ROOT / 'frontend' / 'src'
 CSS_PATH = SRC_DIR / 'index.css'
 DIST_DIR = Path(settings.BASE_DIR) / 'frontend_dist'
 
+# Extensions that carry component source.
+#
+# ``.tsx``/``.ts`` were added when components were migrated to TypeScript. While
+# only ``*.jsx``/``*.js`` were collected, every migrated component dropped out of
+# these theme checks without a single failure - an undefined custom property or
+# a dead selector in a converted file would have gone unnoticed.
+_FRONTEND_SOURCE_GLOBS = ('*.js', '*.jsx', '*.ts', '*.tsx')
+
+
+def _component_sources():
+    """Every frontend source file, de-duplicated and in a stable order."""
+    return sorted(
+        {p for pattern in _FRONTEND_SOURCE_GLOBS for p in SRC_DIR.rglob(pattern)},
+        key=lambda p: str(p),
+    )
+
 # The app-shell block is delimited by these two banner comments. Anchoring on
 # the text inside them means a test stays attached to the code it protects even
 # as lines are added above it.
@@ -393,7 +409,7 @@ class UndefinedCustomPropertyTests(StylesheetPresentTests):
     def test_no_undefined_custom_properties_in_components(self):
         """Components may read tokens too, so their definitions count as well."""
         used, defined = set(), set()
-        for path in sorted(SRC_DIR.rglob('*.jsx')) + sorted(SRC_DIR.rglob('*.js')):
+        for path in _component_sources():
             text = _read(path)
             used |= used_properties(text)
             defined |= defined_properties(text)
@@ -958,7 +974,7 @@ class LightSurfaceHasDarkCounterpartTests(StylesheetPresentTests):
         turns into a failure telling you to theme it rather than into a silent
         hole in the dark theme.
         """
-        sources = (sorted(SRC_DIR.rglob('*.jsx')) + sorted(SRC_DIR.rglob('*.js')))
+        sources = _component_sources()
         self.assertTrue(sources, 'no component sources found under %s' % SRC_DIR)
         blob = '\n'.join(_strip_js_comments(_read(path)) for path in sources)
         revived = [prefix for prefix in DEAD_SELECTOR_PREFIXES if prefix in blob]
