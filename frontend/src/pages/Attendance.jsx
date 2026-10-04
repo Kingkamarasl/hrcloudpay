@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { api } from '../api/client';
+import { api, downloadFile } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import EmployeePicker from '../components/EmployeePicker';
 import Icon from '../components/Icon';
@@ -169,7 +169,7 @@ export default function Attendance() {
   async function downloadTemplate() {
     setError('');
     try {
-      const { blob, disposition } = await api.downloadFile('/attendance/imports/template/');
+      const { blob, disposition } = await downloadFile('/attendance/imports/template/');
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
