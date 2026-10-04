@@ -289,6 +289,113 @@ Note that `create_backup` backs up the **database only** — the rows name each
 uploaded file but do not contain it. Back up the bucket too, and restore both
 into a scratch environment to confirm the documents actually open.
 
+### Deploying to Spaceship shared hosting (hrcloudpay.com)
+
+Shared hosting runs Passenger, not the container. The good news is that this
+application's default shape is the one shared hosting wants: Django serves the
+built SPA from `backend/frontend_dist` through `serve_frontend`, and WhiteNoise
+serves the assets, so there is one origin, no Nginx to configure and no rewrite
+rules. `backend/Dockerfile` and `vercel.json` are unused here.
+
+Prerequisites, in the order they can block you:
+
+1. **Python 3.10 or newer** in *Setup Python App*. Django 5.2 will not start on
+   3.9. Check this first; if the selector tops out lower, the fix is a Django
+   downgrade, not a configuration change.
+2. **Postgres reachable over TCP.** `_database_from_url` can only express a
+   hostname and a port - not a unix socket path - so a host that hands you
+   `/tmp/psql.sock` cannot be configured through `DATABASE_URL`. Find out now,
+   not halfway through the first deploy.
+3. **An active SSL certificate** for `hrcloudpay.com`. `SECURE_SSL_REDIRECT`
+   defaults to on, so activating it before the certificate works turns every
+   request into a redirect to nowhere.
+4. **SSH access**, so deploys are a `git pull` rather than a file upload.
+
+Build the frontend locally; there is no Node on the host, and there does not need
+to be.
+
+```
+cd frontend && npm ci && npm run build      # writes ../backend/frontend_dist
+```
+
+Create the Passenger application with **Application root = `backend/`** and
+**Startup file = `passenger_wsgi.py`**, then install into the generated virtualenv:
+
+```
+source ~/virtualenv/<app>/<version>/bin/activate
+pip install -r requirements.txt
+```
+
+#### The `.env` for hrcloudpay.com
+
+Put this at `backend/.env` and `chmod 600`. It is read by python-decouple, which
+searches upward from `backend/hrcloudpay/settings.py`.
+
+```
+SECRET_KEY=<generate: python -c "from django.core.management.utils import get_random_secret_key as k; print(k())">
+DEBUG=False
+ALLOWED_HOSTS=hrcloudpay.com,www.hrcloudpay.com
+FRONTEND_URL=https://hrcloudpay.com
+BACKEND_PUBLIC_URL=https://hrcloudpay.com
+DATABASE_URL=postgres://<user>:<password>@localhost:<port>/<dbname>
+SECURE_SSL_REDIRECT=True
+DEFAULT_FROM_EMAIL=no-reply@hrcloudpay.com
+CORS_ALLOWED_ORIGINS=
+```
+
+**`FRONTEND_URL` is the one that bites.** It builds company activation links
+(`accounts/views.py`), the post-payment redirect (`accounts/payment_services.py`)
+and OAuth return URLs (`integrations/oauth.py`). The shipped default is
+`http://localhost:5173`, so a deployment that copies `.env.example` faithfully
+sends every activation email to a link that resolves on nobody's machine. Set it
+to `https://hrcloudpay.com` and the accounts work.
+
+`CORS_ALLOWED_ORIGINS` can be empty: the SPA and the API are one origin, so no
+cross-origin request is ever made. Leaving the localhost default in place is
+harmless but misleading.
+
+Pick one hostname and redirect the other to it. Serving the site on both
+`hrcloudpay.com` and `www.hrcloudpay.com` splits sessions and duplicates every
+page; Spaceship's *Domains* section can redirect `www` to the apex.
+
+#### Two silent failure modes
+
+**SQLite.** With `DATABASE_URL` empty, `settings.py` falls through to SQLite and
+the site comes up looking completely healthy with no employees, no payslips and
+no audit rows. If the first thing you see is a working login page and empty
+dashboards, check that `.env` was actually found before anything else.
+
+**Uploaded files.** `MEDIA_ROOT` is a directory on whichever machine runs Django,
+so without `AWS_STORAGE_BUCKET_NAME` every uploaded file is lost on the next
+deploy. Employee documents, contracts, payslip attachments and knowledge-base
+sources all live there.
+
+#### OCR of scanned documents
+
+There is no `tesseract` binary and no way to install one - no root, no package
+manager - so scanned and image-only PDFs cannot be read. Digital PDFs are
+unaffected, because they carry a text layer, and DOCX never involved OCR. The
+upload refuses such a document and names the unreadable pages rather than
+indexing it with pages missing.
+
+#### Every deploy
+
+```
+cd ~/hrcloudpay && git pull
+source ~/virtualenv/<app>/<version>/bin/activate
+cd backend
+python manage.py migrate --noinput
+python manage.py collectstatic --noinput --clear
+python manage.py seed_country_rules
+python manage.py seed_filing_rules
+python manage.py seal_audit_backlog        # first deploy only
+python manage.py verify_audit_chain
+touch ~/hrcloudpay/backend/tmp/restart.txt
+```
+
+Passenger caches the loaded application. Skipping the restart means the old code
+keeps serving, which looks like the deploy silently not working.
+
 ### Release order
 
 Run these in this order. Steps 2 and 3 are not optional and neither is safe to
