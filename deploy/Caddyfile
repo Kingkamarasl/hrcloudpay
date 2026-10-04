@@ -1,0 +1,51 @@
+# hrcloudpay.com - reverse proxy and automatic TLS.
+#
+# Caddy obtains and renews a Let's Encrypt certificate on its own, so there is
+# no cert to install, expire or renew by hand. It only succeeds if ports 80 and
+# 443 are open in the OCI security list AND the DNS A record for the domain
+# already points at this host - ACME needs to reach it over plain HTTP first.
+
+# The apex is canonical.
+hrcloudpay.com {
+	encode zstd gzip
+
+	# Django sets its own security headers (CSP, HSTS, nosniff, DENY frames).
+	# `header` here would replace a whole block, so nothing is added: anything
+	# set at the proxy would silently drop what Django already sends.
+
+	reverse_proxy backend:8000 {
+		# Django's SECURE_SSL_REDIRECT reads this. Without it the app would
+		# see plain HTTP behind the proxy and redirect to https in a loop.
+		header_up X-Forwarded-Proto https
+		header_up X-Real-IP {remote_host}
+
+		# A payslip PDF or a knowledge-base PDF is generated on request and can
+		# take a while. Caddy's default has no response timeout, but an
+		# explicit generous one documents that slowness here is intended rather
+		# than a hang.
+		transport http {
+			read_timeout 300s
+			write_timeout 300s
+		}
+	}
+
+	# Belt and braces: HSTS with preload is already sent by Django, but only
+	# once the browser has seen a successful https response. Adding it at the
+	# edge means the instruction survives even a request that Django did not
+	# answer.
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+}
+
+# www redirects to the apex rather than serving a second copy of the site.
+#
+# Serving both is worse than a cosmetic duplicate: the session cookie is
+# scoped to a host, so a visitor who lands on www and then reaches a link to the
+# apex is logged out, and every page exists at two URLs.
+www.hrcloudpay.com {
+	redir https://hrcloudpay.com{uri} permanent
+}
+
+# Do not add a handler for /.well-known/acme-challenge/. Caddy answers the
+# certificate challenge itself as part of the TLS automation above, and
+# intercepting that path returns 404 to the CA and issuance fails with an error
+# that points nowhere near the cause.

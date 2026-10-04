@@ -1,0 +1,111 @@
+# HRCloudPay - production stack for a single VM (Oracle Cloud Always Free ARM,
+# or anywhere else with Docker and a persistent volume).
+#
+# Separate from docker-compose.yml on purpose. That file is the local development
+# stack: localhost hostnames, no TLS, console email. This one is what faces the
+# internet, and merging them would mean the dev stack quietly acquiring
+# production's security posture or the other way round.
+#
+# Only Caddy publishes ports. Postgres and Redis are reachable on the internal
+# Docker network alone - no `ports:` entry - so neither is exposed to the
+# internet even if the host firewall is misconfigured. That is the single most
+# important property of this file.
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: hrcloudpay:latest
+    restart: unless-stopped
+    # The image CMD reads $PORT. Pin it so the container and the Caddy upstream
+    # cannot drift apart.
+    environment:
+      PORT: "8000"
+      DEBUG: "False"
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
+      DATABASE_URL: postgres://hrcloudpay:${DB_PASSWORD:?set DB_PASSWORD in .env}@db:5432/hrcloudpay
+      REDIS_URL: redis://redis:6379/0
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-hrcloudpay.com}
+      FRONTEND_URL: https://hrcloudpay.com
+      BACKEND_PUBLIC_URL: https://hrcloudpay.com
+      SECURE_SSL_REDIRECT: "True"
+      # Empty is correct: the SPA and the API share one origin, so no
+      # cross-origin request is ever made.
+      CORS_ALLOWED_ORIGINS: ""
+      # Uploaded files go to S3. Without these, MEDIA_ROOT is a directory in
+      # this container and every `docker compose up -d --build` destroys every
+      # employee document, contract and payslip attachment ever uploaded.
+      AWS_STORAGE_BUCKET_NAME: ${AWS_STORAGE_BUCKET_NAME:-}
+      AWS_S3_REGION_NAME: ${AWS_S3_REGION_NAME:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      EMAIL_BACKEND: ${EMAIL_BACKEND:-django.core.mail.backends.console.EmailBackend}
+      EMAIL_HOST: ${EMAIL_HOST:-}
+      EMAIL_PORT: ${EMAIL_PORT:-587}
+      EMAIL_HOST_USER: ${EMAIL_HOST_USER:-}
+      EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD:-}
+      EMAIL_USE_TLS: ${EMAIL_USE_TLS:-True}
+      DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-no-reply@hrcloudpay.com}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      # Only a fallback. With S3 configured nothing important lands here.
+      - media_files:/app/backend/media
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: hrcloudpay
+      POSTGRES_USER: hrcloudpay
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hrcloudpay"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Rate-limit counters live here. Without Redis the limit degrades to
+    # per-process counting, so the configured 10 logins per minute becomes 40
+    # across 4 gunicorn workers - the limit still works, it is just four times
+    # weaker than the number in the code.
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates live here. Without a volume, every rebuild re-requests
+      # them and rate limits start returning errors.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  redis_data:
+  media_files:
+  caddy_data:
+  caddy_config:
