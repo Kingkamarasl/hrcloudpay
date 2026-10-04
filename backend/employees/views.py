@@ -1,4 +1,4 @@
-﻿from django.db.models import Q
+from django.db.models import Q
 import csv
 import io
 from rest_framework import viewsets, serializers
@@ -301,7 +301,27 @@ class EmployeeViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], url_path='import-csv', parser_classes=[MultiPartParser, FormParser])
     def import_csv(self, request):
-        """Bulk import employees from a CSV file."""
+        """Bulk import employees from a CSV file.
+
+        Idempotent on (company, email). This used to create unconditionally, so
+        importing the same file twice produced two employee records per row -
+        two payroll runs, two attendance histories, two of everything downstream.
+
+        The unique index that should have caught it cannot. `employee_code` is
+        allocated per row as a random four-digit suffix
+        (Employee.allocate_employee_code; the serializer also discards any
+        client-supplied value), so the (company, employee_code) constraint never
+        sees a collision, and `email` carried no uniqueness of its own.
+
+        A row whose email already exists in this company therefore updates that
+        employee and is counted separately, so a re-run reports what it changed
+        instead of silently doubling the workforce.
+
+        `department` is matched by name. The old code passed the raw cell as
+        `department_obj`, which is a foreign key, so any row carrying a
+        department failed validation with "Incorrect type" - the column could
+        never have worked.
+        """
         if request.user.role not in ('owner', 'admin', 'hr'):
             return Response({'detail': 'Insufficient permissions for importing employees.'}, status=403)
 
@@ -309,54 +329,109 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         if not file_obj:
             return Response({'detail': 'No file uploaded.'}, status=400)
 
-        if not file_obj.name.endswith('.csv'):
+        if not file_obj.name.lower().endswith('.csv'):
             return Response({'detail': 'Please upload a CSV file.'}, status=400)
 
         try:
-            decoded_file = file_obj.read().decode('utf-8').splitlines()
-            reader = csv.DictReader(decoded_file)
-            
-            success_count = 0
-            failures = []
+            decoded_file = file_obj.read().decode('utf-8-sig').splitlines()
+        except UnicodeDecodeError:
+            return Response({'detail': 'The file must be UTF-8 encoded.'}, status=400)
 
-            with transaction.atomic():
-                for i, row in enumerate(reader, start=1):
-                    try:
-                        # Basic validation
-                        if not row.get('first_name') or not row.get('last_name') or not row.get('email'):
-                            raise ValidationError(f"Row {i}: Missing required fields (first_name, last_name, email).")
+        reader = csv.DictReader(decoded_file)
+        company = request.user.company
 
-                        # Create employee using serializer to maintain validation logic
-                        serializer = EmployeeSerializer(data={
-                            'first_name': row.get('first_name'),
-                            'last_name': row.get('last_name'),
-                            'email': row.get('email'),
-                            'phone': row.get('phone', ''),
-                            'job_title': row.get('job_title', ''),
-                            'department_obj': row.get('department_obj'), # Note: may need mapping if name is provided
-                            'base_salary': row.get('base_salary'),
-                            'hire_date': row.get('hire_date'),
-                            'employment_status': row.get('employment_status', 'active'),
-                            'employment_category': row.get('employment_category', 'long_time'),
-                        }, context={'request': request})
+        created_count = 0
+        updated_count = 0
+        failures = []
+        touched_ids = []
 
+        with transaction.atomic():
+            for i, row in enumerate(reader, start=1):
+                try:
+                    if not row.get('first_name') or not row.get('last_name') or not row.get('email'):
+                        failures.append({
+                            'row': i,
+                            'error': 'Missing required fields (first_name, last_name, email).',
+                        })
+                        continue
+
+                    email = row['email'].strip()
+                    department_name = (row.get('department') or '').strip()
+
+                    payload = {
+                        'first_name': row['first_name'].strip(),
+                        'last_name': row['last_name'].strip(),
+                        'email': email,
+                        'phone': (row.get('phone') or '').strip(),
+                        'job_title': (row.get('job_title') or '').strip(),
+                        'base_salary': (row.get('base_salary') or '').strip(),
+                        'hire_date': (row.get('hire_date') or '').strip(),
+                        'employment_status': (row.get('employment_status') or 'active').strip(),
+                        'employment_category': (row.get('employment_category') or 'long_time').strip(),
+                    }
+                    payload = {k: v for k, v in payload.items() if v != ''}
+
+                    if department_name:
+                        department = Department.objects.filter(
+                            company=company, name__iexact=department_name).first()
+                        if department is None:
+                            failures.append({
+                                'row': i,
+                                'error': 'No department named "%s" in this company.' % department_name,
+                            })
+                            continue
+                        payload['department_obj'] = department.id
+                        payload['department'] = department.name
+
+                    existing = Employee.objects.filter(
+                        company=company, email__iexact=email).first()
+
+                    if existing is not None:
+                        serializer = EmployeeSerializer(
+                            existing, data=payload, partial=True,
+                            context={'request': request},
+                        )
                         if serializer.is_valid():
-                            serializer.save(company=request.user.company)
-                            success_count += 1
+                            serializer.save()
+                            updated_count += 1
+                            touched_ids.append(existing.id)
                         else:
                             failures.append({'row': i, 'errors': serializer.errors})
+                        continue
 
-                    except Exception as e:
-                        failures.append({'row': i, 'error': str(e)})
+                    serializer = EmployeeSerializer(
+                        data=payload, context={'request': request})
+                    if serializer.is_valid():
+                        touched_ids.append(serializer.save().id)
+                        created_count += 1
+                    else:
+                        failures.append({'row': i, 'errors': serializer.errors})
 
-            return Response({
-                'imported': success_count,
-                'failed': len(failures),
-                'failures': failures
-            }, status=201 if success_count > 0 else 400)
+                except Exception as exc:
+                    failures.append({'row': i, 'error': str(exc)})
 
-        except Exception as e:
-            return Response({'detail': f'Critical error parsing CSV: {str(e)}'}, status=400)
+        if created_count or updated_count:
+            audit(
+                request.user, 'create',
+                'Imported employees from %s' % file_obj.name,
+                company, 'employee', '',
+                {
+                    'filename': file_obj.name,
+                    'created': created_count,
+                    'updated': updated_count,
+                    'failed': len(failures),
+                    'employee_ids': touched_ids,
+                },
+                request=request,
+            )
+
+        return Response({
+            'imported': created_count,
+            'created': created_count,
+            'updated': updated_count,
+            'failed': len(failures),
+            'failures': failures,
+        }, status=201 if (created_count or updated_count) else 400)
 
     @action(detail=False, methods=['post'], url_path='bulk-salary-update')
     def bulk_salary_update(self, request):
