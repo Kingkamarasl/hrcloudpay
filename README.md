@@ -339,6 +339,38 @@ you. **Pick one hostname.** Serving both `hrcloudpay.com` and
 bounces between them mid-session and the cookie is set twice. Redirect `www` to
 the apex.
 
+#### The first company on a new database
+
+Verified against a freshly migrated database, because it is the step that has no
+documentation and no error message.
+
+`RegisterSerializer.create` inserts a `Company` with `is_active` at its model
+default, which is **False** (`accounts/models.py`). The owner account is active,
+so the person registers and logs in successfully - and then `IsCompanyActive`
+refuses every core HR and payroll route with *"Your company account is not yet
+activated."*
+
+The public registration path **does not send an activation email**. Only the
+platform path does (`accounts/platform.py`), which needs a platform superuser.
+On a database with no superuser, the first company is therefore stuck: usable
+login, no access to anything, and no email explaining why.
+
+Bootstrap a platform superuser and activate it:
+
+```
+railway run python manage.py createsuperuser     # company: leave blank
+railway run python manage.py shell -c "from accounts.models import Company; \
+  Company.objects.update(is_active=True); print(Company.objects.count(), 'activated')"
+```
+
+A superuser's `company` must be null - the platform's own endpoints reject a
+superuser attached to a tenant, and `admin` in a seeded dev database is a
+frequent source of confusing 403s for the same reason.
+
+Configure `EMAIL_BACKEND` before you need it. It defaults to the console backend,
+which on a container writes to stdout that nobody reads: activation, password
+reset and invitation mail all disappear silently, with no failure logged.
+
 #### Health checks
 
 Leave the healthcheck path empty. The obvious candidate,
