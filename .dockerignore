@@ -4,6 +4,15 @@ __pycache__/
 *$py.class
 *.so
 .Python
+# `.venv` is the pattern that actually matters here. The three below matched
+# nothing: `venv/`, `env/` and `ENV/` are exact directory names, and a local
+# virtualenv is `.venv` with a leading dot. The Windows virtualenv was being
+# copied into the Linux image - roughly 250 MB of the wrong platform, wheels
+# built for win32, none of which the container can use.
+.venv/
+**/.venv/
+**/venv/
+**/env/
 venv/
 env/
 ENV/
@@ -20,6 +29,11 @@ yarn-error.log*
 # Frontend build (built inside Docker)
 frontend/dist/
 frontend/backend/frontend_dist/
+# This one is produced by `npm run build` on the host and copied over by
+# `COPY --from=frontend-builder` inside the image. Shipping the host copy as
+# well doubles the assets and lets a stale local build mask a broken image
+# build, because the later COPY wins and the earlier one is just dead weight.
+backend/frontend_dist/
 
 # Database
 *.sqlite3
