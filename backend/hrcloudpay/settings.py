@@ -509,8 +509,19 @@ CORS_ALLOWED_ORIGINS = [h.strip() for h in config(
     default='http://localhost:5173,http://127.0.0.1:5173'
 ).split(',') if h.strip()]
 
-# Email backend - console by default for local dev (activation emails print to terminal)
-EMAIL_BACKEND = config('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')
+# Email.
+#
+# An explicit EMAIL_BACKEND always wins. An operator who set one is not
+# overridden by a feature they did not ask for, and a deployment that predates
+# the platform setting keeps behaving exactly as it did.
+#
+# With nothing set, the platform-managed backend reads the singleton EmailConfig
+# row and falls back to the console backend until an admin configures a host. The
+# console default is deliberate rather than an oversight: it is what makes
+# activation emails visible on a developer's machine, and it is what a fresh
+# deployment falls back to instead of silently dropping every message.
+_EMAIL_BACKEND = config('EMAIL_BACKEND', default='')
+EMAIL_BACKEND = _EMAIL_BACKEND or 'hrcloudpay.email_backend.PlatformEmailBackend'
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='no-reply@hrcloudpay.com')
 
 FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:5173')

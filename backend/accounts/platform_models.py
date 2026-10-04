@@ -355,3 +355,69 @@ class BillingPlan(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class EmailConfig(models.Model):
+    """Site-wide outbound SMTP configuration, set by a platform superuser.
+
+    A singleton: at most one row. This lives in the database rather than the
+    environment because the person who can make mail work is the person who runs
+    the platform, and they should not need a deployment edit to do it.
+    EMAIL_BACKEND in the environment still wins when set explicitly, so an
+    operator is never locked out of the setting.
+
+    The SMTP password is encrypted at rest with the same Fernet helper that
+    protects payment provider secrets and the AI provider key
+    (`accounts.secrets`). The API returns only `password_set`, a boolean, and
+    the audit row records `password_changed` - never the value itself.
+    """
+
+    host = models.CharField(max_length=255, blank=True)
+    port = models.PositiveIntegerField(default=587)
+    username = models.CharField(max_length=255, blank=True)
+    encrypted_password = models.TextField(blank=True)
+    use_tls = models.BooleanField(
+        default=True,
+        help_text='STARTTLS on an existing connection. Mutually exclusive with SSL.')
+    use_ssl = models.BooleanField(
+        default=False,
+        help_text='Implicit TLS from the first byte, usually port 465. '
+                  'Mutually exclusive with TLS.')
+    from_email = models.EmailField(blank=True)
+    timeout_seconds = models.PositiveIntegerField(default=30)
+    # Off until a host is supplied. An active-but-wrong config silently swallows
+    # every message, which is worse than the console backend's noise.
+    is_active = models.BooleanField(default=False)
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='email_config_updates',
+    )
+
+    class Meta:
+        verbose_name = 'email configuration'
+
+    def __str__(self):
+        return f'Email via {self.host}:{self.port}' if self.host else 'Email (not configured)'
+
+    def set_password(self, value):
+        from .secrets import encrypt_secret
+        self.encrypted_password = encrypt_secret(value or '')
+
+    def get_password(self):
+        from .secrets import decrypt_secret
+        return decrypt_secret(self.encrypted_password)
+
+    @property
+    def password_set(self):
+        return bool(self.encrypted_password)
+
+    @property
+    def usable(self):
+        """Whether a send should be attempted over SMTP.
+
+        Needs a host and the active flag. Credentials are not required: local
+        relays commonly take none, and some authenticate on the from address
+        alone, so demanding a password here would reject working configurations.
+        """
+        return bool(self.is_active and self.host)

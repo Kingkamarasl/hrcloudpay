@@ -1401,3 +1401,245 @@ class PlatformAITestView(APIView):
         except NVIDIAError as exc:
             audit(request.user, 'platform_ai_test', 'NVIDIA AI connection test failed.', None, 'ai_provider_config', None, {'success': False})
             return Response({'success': False, 'detail': str(exc)}, status=503)
+
+
+def _test_message(subject, body, config, recipient):
+    """Build the test EmailMessage.
+
+    Kept out of the view so the view reads as request handling rather than MIME
+    assembly, and so a future change to the test message is one edit away from
+    the code that sends it.
+    """
+    from django.core.mail import EmailMultiAlternatives
+
+    message = EmailMultiAlternatives(
+        subject, body, config.from_email or settings.DEFAULT_FROM_EMAIL, [recipient],
+    )
+    message.attach_alternative(body, 'text/plain')
+    return message
+
+
+class PlatformEmailConfigView(APIView):
+    """Read or update the site-wide SMTP settings.
+
+    The SMTP password is write-only. GET reports `password_set` and never the
+    value; POST accepts a new one and leaves the stored secret untouched when
+    the field is absent or blank, so a form that does not re-send the password
+    on every save does not wipe it.
+
+    The audit row records `password_changed` as a boolean for the same reason -
+    an audit trail is read by more people than the settings screen, and a
+    credential in it is a credential leaked.
+    """
+
+    permission_classes = [IsPlatformSecretsAdmin]
+
+    def _state(self):
+        from .platform_models import EmailConfig
+
+        config = EmailConfig.objects.first()
+        if not config:
+            return {
+                'configured': False,
+                'in_use': False,
+                'host': '',
+                'port': 587,
+                'username': '',
+                'password_set': False,
+                'use_tls': True,
+                'use_ssl': False,
+                'from_email': '',
+                'timeout_seconds': 30,
+                'is_active': False,
+                'updated_at': None,
+                'updated_by': None,
+            }
+        return {
+            'configured': bool(config.host),
+            # What the running app will actually do right now. `configured` alone
+            # is not enough: a saved-but-inactive row looks complete on the form
+            # while mail still goes to the console.
+            'in_use': config.usable,
+            'host': config.host,
+            'port': config.port,
+            'username': config.username,
+            'password_set': config.password_set,
+            'use_tls': config.use_tls,
+            'use_ssl': config.use_ssl,
+            'from_email': config.from_email,
+            'timeout_seconds': config.timeout_seconds,
+            'is_active': config.is_active,
+            'updated_at': config.updated_at,
+            'updated_by': config.updated_by.username if config.updated_by else None,
+        }
+
+    def get(self, request):
+        return Response(self._state())
+
+    def post(self, request):
+        from .platform_models import EmailConfig
+
+        data = request.data
+        errors = {}
+
+        host = data.get('host')
+        if host is not None:
+            host = str(host).strip()
+            if host and len(host) > 255:
+                errors['host'] = 'Host name is too long.'
+
+        port = data.get('port')
+        parsed_port = None
+        if port is not None and str(port).strip() != '':
+            try:
+                parsed_port = int(port)
+            except (TypeError, ValueError):
+                errors['port'] = 'Port must be a whole number.'
+            else:
+                if not 1 <= parsed_port <= 65535:
+                    errors['port'] = 'Port must be between 1 and 65535.'
+
+        timeout = data.get('timeout_seconds')
+        parsed_timeout = None
+        if timeout is not None and str(timeout).strip() != '':
+            try:
+                parsed_timeout = int(timeout)
+            except (TypeError, ValueError):
+                errors['timeout_seconds'] = 'Timeout must be a whole number of seconds.'
+            else:
+                if not 1 <= parsed_timeout <= 300:
+                    errors['timeout_seconds'] = 'Timeout must be between 1 and 300 seconds.'
+
+        use_tls = data.get('use_tls')
+        use_ssl = data.get('use_ssl')
+        if use_tls is not None and use_ssl is not None:
+            if bool(use_tls) and bool(use_ssl):
+                # smtplib cannot do both: SMTP_SSL is already encrypted, and
+                # starttls() on that socket raises. Catching it here beats a
+                # 500 on the first send after saving.
+                errors['use_ssl'] = (
+                    'Choose either STARTTLS or SSL, not both. SSL is usually '
+                    'port 465; STARTTLS is usually port 587.'
+                )
+
+        from_email = data.get('from_email')
+        if from_email is not None:
+            from_email = str(from_email).strip()
+            if from_email and '@' not in from_email:
+                errors['from_email'] = 'Enter a valid email address.'
+
+        password = str(data.get('password') or '').strip()
+
+        if errors:
+            return Response({'detail': 'Please correct the highlighted fields.',
+                             'errors': errors}, status=400)
+
+        config = EmailConfig.objects.first() or EmailConfig()
+        if host is not None:
+            config.host = host
+        if parsed_port is not None:
+            config.port = parsed_port
+        if data.get('username') is not None:
+            config.username = str(data.get('username')).strip()
+        if from_email is not None:
+            config.from_email = from_email
+        if use_tls is not None:
+            config.use_tls = bool(use_tls)
+        if use_ssl is not None:
+            config.use_ssl = bool(use_ssl)
+        if parsed_timeout is not None:
+            config.timeout_seconds = parsed_timeout
+        if password:
+            config.set_password(password)
+        if 'is_active' in data:
+            config.is_active = bool(data.get('is_active'))
+
+        # Activating with no host would leave the app reporting a working
+        # configuration while every message went to the console.
+        if config.is_active and not config.host:
+            return Response({
+                'detail': 'Enter an SMTP host before activating.',
+                'errors': {'host': 'Required before this configuration can be used.'},
+            }, status=400)
+
+        config.updated_by = request.user
+        config.save()
+
+        audit(
+            request.user, 'platform_email_config',
+            'Updated site email configuration.', None,
+            'email_config', config.id,
+            {
+                'host': config.host,
+                'port': config.port,
+                'use_tls': config.use_tls,
+                'use_ssl': config.use_ssl,
+                'is_active': config.is_active,
+                # Boolean, never the value.
+                'password_changed': bool(password),
+            },
+        )
+        return Response(self._state())
+
+
+class PlatformEmailTestView(APIView):
+    """Send one real message through the configured SMTP server.
+
+    Without this, a wrong password is discovered when a customer cannot
+    activate their account rather than while an admin is watching a test send.
+    """
+
+    permission_classes = [IsPlatformSecretsAdmin]
+
+    def post(self, request):
+        from django.core.mail import send_mail
+
+        from .platform_models import EmailConfig
+
+        recipient = str(request.data.get('to') or request.user.email or '').strip()
+        if not recipient or '@' not in recipient:
+            return Response({'detail': 'Provide a valid recipient address.',
+                             'errors': {'to': 'A valid email address is required.'}},
+                            status=400)
+
+        config = EmailConfig.objects.first()
+        if config is None or not config.usable:
+            return Response({
+                'detail': ('Email is not active yet. Save an SMTP host and tick '
+                           '"use these settings for sending" first.'),
+            }, status=400)
+
+        subject = 'HRCloudPay email configuration test'
+        body = (
+            'This message confirms that HRCloudPay can send mail through the '
+            'SMTP settings a platform administrator saved.\n\n'
+            'If you are reading it, the configuration works.\n'
+        )
+
+        from hrcloudpay.email_backend import PlatformEmailBackend
+
+        backend = PlatformEmailBackend(fail_silently=False)
+        try:
+            sent = backend.send_messages([
+                _test_message(subject, body, config, recipient),
+            ])
+        except Exception as exc:
+            audit(
+                request.user, 'platform_email_test',
+                'Site email configuration test failed.', None,
+                'email_config', config.id,
+                {'success': False, 'error_type': type(exc).__name__},
+            )
+            # The exception text can contain the server's response, which is
+            # useful to the admin and contains no credential, so it is returned
+            # rather than swallowed.
+            return Response({'success': False, 'detail': str(exc)}, status=503)
+
+        audit(
+            request.user, 'platform_email_test',
+            'Sent a site email configuration test.', None,
+            'email_config', config.id,
+            {'success': True, 'recipient': recipient, 'messages_sent': sent},
+        )
+        return Response({'success': True, 'messages_sent': sent,
+                         'detail': f'Test message accepted for {recipient}.'})

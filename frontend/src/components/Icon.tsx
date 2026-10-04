@@ -8,6 +8,7 @@ const paths: Record<string, string> = {
   users: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75',
   building: 'M3 21h18M6 21V5l6-3 6 3v16M9 9h1M14 9h1M9 13h1M14 13h1M9 17h1M14 17h1',
   wallet: 'M3 7h18v14H3zM3 7l2-4h14l2 4M16 14h5',
+  mail: 'M3 5h18v14H3zM3 6l9 7 9-7',
   calendar: 'M4 5h16v16H4zM8 3v4M16 3v4M4 10h16',
   clock: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM12 6v6l4 2',
   file: 'M6 2h9l5 5v15H6zM14 2v6h6M9 13h6M9 17h6',

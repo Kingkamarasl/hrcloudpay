@@ -1,6 +1,6 @@
 from django.urls import path
 
-from .platform import (PlatformDashboardView, PlatformCompaniesView, PlatformCompanyDetailView, PlatformCompanyActivationView, PlatformCompanySuspensionView, PlatformCompanyResendActivationView, PlatformUsersView, PlatformUserDetailView, PlatformUsageView, PlatformSubscriptionsView, PlatformOnboardingView, PlatformAuditLogsView, PlatformNotificationsView, PlatformSupportView, PlatformAnalyticsView, PlatformBillingPlansView, PlatformPaymentProvidersView, PlatformPaymentProviderToggleView, PlatformSubscriptionStatusView, PlatformCompany360View, PlatformPaymentTransactionsView, PlatformSystemHealthView, PlatformSecurityCenterView, PlatformFeatureFlagsView, PlatformFeatureFlagDetailView, PlatformSupportDetailView, PlatformGlobalSearchView, PaymentWebhookView, BillingPlansView, CompanyBillingView, CompanyBillingCheckoutView, CompanyBillingVerifyView, PublicMarketingPageView, PlatformMarketingPagesView, PlatformMarketingPageDetailView, PlatformAIConfigView, PlatformAITestView, PlatformSiteBrandingView, CompanyBillingCancelView, CompanyBillingReactivateView, CompanyBillingInvoicesView)
+from .platform import (PlatformDashboardView, PlatformCompaniesView, PlatformCompanyDetailView, PlatformCompanyActivationView, PlatformCompanySuspensionView, PlatformCompanyResendActivationView, PlatformUsersView, PlatformUserDetailView, PlatformUsageView, PlatformSubscriptionsView, PlatformOnboardingView, PlatformAuditLogsView, PlatformNotificationsView, PlatformSupportView, PlatformAnalyticsView, PlatformBillingPlansView, PlatformPaymentProvidersView, PlatformPaymentProviderToggleView, PlatformSubscriptionStatusView, PlatformCompany360View, PlatformPaymentTransactionsView, PlatformSystemHealthView, PlatformSecurityCenterView, PlatformFeatureFlagsView, PlatformFeatureFlagDetailView, PlatformSupportDetailView, PlatformGlobalSearchView, PaymentWebhookView, BillingPlansView, CompanyBillingView, CompanyBillingCheckoutView, CompanyBillingVerifyView, PublicMarketingPageView, PlatformMarketingPagesView, PlatformMarketingPageDetailView, PlatformAIConfigView, PlatformAITestView, PlatformEmailConfigView, PlatformEmailTestView, PlatformSiteBrandingView, CompanyBillingCancelView, CompanyBillingReactivateView, CompanyBillingInvoicesView)
 from .views import (
     PublicFeaturesView, ActivateView, CompanyAuditLogsView, CompanyUserDetailView,
     CompanyUsersView, CompanySettingsView, CompanyLogoView, LoginView, LogoutView, MeView, RegisterView,
@@ -44,6 +44,8 @@ urlpatterns = [
     path('platform/payment-providers/<str:provider>/toggle/', PlatformPaymentProviderToggleView.as_view(), name='platform-payment-provider-toggle'),
     path('platform/ai-config/', PlatformAIConfigView.as_view(), name='platform-ai-config'),
     path('platform/ai-config/test/', PlatformAITestView.as_view(), name='platform-ai-test'),
+    path('platform/email-config/', PlatformEmailConfigView.as_view(), name='platform-email-config'),
+    path('platform/email-config/test/', PlatformEmailTestView.as_view(), name='platform-email-test'),
     path('platform/site-branding/', PlatformSiteBrandingView.as_view(), name='platform-site-branding'),
     path('payments/webhook/<str:provider>/', PaymentWebhookView.as_view(), name='payment-webhook'),
     path('billing/plans/', BillingPlansView.as_view(), name='billing-plans'),

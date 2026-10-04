@@ -9,7 +9,7 @@ import { PLAN_ORDER, PLAN_LABELS, planLabel } from '../constants/plans';
 const PLANS = { starter:'Starter', business:'Business', professional:'Professional', scale:'Scale', enterprise:'Enterprise' };
 const tabs = [
   ['overview','Overview'], ['companies','Companies'], ['subscriptions','Billing'], ['usage','Usage'], ['content','Marketing content'],
-  ['onboarding','Onboarding'], ['support','Support'], ['notifications','Communications'], ['payments','Transactions'], ['audit','Audit log'], ['security','Security center'], ['analytics','Analytics'], ['users','Users'], ['health','System health'], ['flags','Feature flags'], ['integrations','Payments & API keys'],['ai','AI / NVIDIA NIM'],['branding','Site icon'], ['plans','Plans']
+  ['onboarding','Onboarding'], ['support','Support'], ['notifications','Communications'], ['payments','Transactions'], ['audit','Audit log'], ['security','Security center'], ['analytics','Analytics'], ['users','Users'], ['health','System health'], ['flags','Feature flags'], ['integrations','Payments & API keys'],['ai','AI / NVIDIA NIM'],['email','Email / SMTP'],['branding','Site icon'], ['plans','Plans']
 ];
 
 function Plans({plans,onSave,onEdit}){
@@ -41,9 +41,9 @@ export default function PlatformAdmin(){
   const [planEdit,setPlanEdit]=useState(null);
 
   async function load(){setBusy(true); setError(''); try{
-    const [d,c,u,s,usage,onboard,support,notifications,audit,analytics,providers,transactions,security,health,flags,marketingPages,aiConfig,branding,plans]=await Promise.all([
-      api.get('/auth/platform/dashboard/'),api.get('/auth/platform/companies/'),api.get('/auth/platform/users/'),api.get('/auth/platform/subscriptions/'),api.get('/auth/platform/usage/'),api.get('/auth/platform/onboarding/'),api.get('/auth/platform/support/'),api.get('/auth/platform/notifications/'),api.get('/auth/platform/audit-logs/'),api.get('/auth/platform/analytics/'),api.get('/auth/platform/payment-providers/'),api.get('/auth/platform/payment-transactions/'),api.get('/auth/platform/security-center/'),api.get('/auth/platform/system-health/'),api.get('/auth/platform/feature-flags/'),api.get('/auth/platform/marketing-pages/'),api.get('/auth/platform/ai-config/').catch(()=>({configured:false,provider:'nvidia_nim'})),api.get('/auth/platform/site-branding/').catch(()=>null),api.get('/auth/platform/billing-plans/')
-    ]); setDashboard(d); setData({companies:c,users:u,subscriptions:s,usage,onboarding:onboard,support,notifications,audit,analytics,providers,transactions,security,health,flags,marketingPages,aiConfig,branding,plans});
+    const [d,c,u,s,usage,onboard,support,notifications,audit,analytics,providers,transactions,security,health,flags,marketingPages,aiConfig,branding,plans,emailConfig]=await Promise.all([
+      api.get('/auth/platform/dashboard/'),api.get('/auth/platform/companies/'),api.get('/auth/platform/users/'),api.get('/auth/platform/subscriptions/'),api.get('/auth/platform/usage/'),api.get('/auth/platform/onboarding/'),api.get('/auth/platform/support/'),api.get('/auth/platform/notifications/'),api.get('/auth/platform/audit-logs/'),api.get('/auth/platform/analytics/'),api.get('/auth/platform/payment-providers/'),api.get('/auth/platform/payment-transactions/'),api.get('/auth/platform/security-center/'),api.get('/auth/platform/system-health/'),api.get('/auth/platform/feature-flags/'),api.get('/auth/platform/marketing-pages/'),api.get('/auth/platform/ai-config/').catch(()=>({configured:false,provider:'nvidia_nim'})),api.get('/auth/platform/site-branding/').catch(()=>null),api.get('/auth/platform/billing-plans/'),api.get('/auth/platform/email-config/').catch(()=>({configured:false,in_use:false,password_set:false}))
+    ]); setDashboard(d); setData({companies:c,users:u,subscriptions:s,usage,onboarding:onboard,support,notifications,audit,analytics,providers,transactions,security,health,flags,marketingPages,aiConfig,branding,plans,emailConfig});
   }catch(e){setError(e.message||'Could not load the control center.')} finally{setBusy(false)}}
   useEffect(()=>{load()},[]);
   useEffect(()=>{const q=search.trim(); if(q.length<2){setGlobalResults(null);return;} const t=setTimeout(async()=>{try{setGlobalResults(await api.get(`/auth/platform/search/?q=${encodeURIComponent(q)}`))}catch{setGlobalResults(null)}},300); return()=>clearTimeout(t)},[search]);
@@ -69,7 +69,7 @@ export default function PlatformAdmin(){
     ['CUSTOMER SUCCESS',[['support','Support','file'],['notifications','Communications','bell']]],
     ['GOVERNANCE',[['users','Users','users'],['branding','Site icon','grid'],['audit','Audit & security','file'],['security','Security center','shield'],['analytics','Analytics','trend']]],
     ['OPERATIONS',[['payments','Transactions','wallet'],['support','Support','file'],['health','System health','activity'],['flags','Feature flags','settings']]],
-    ['PLATFORM',[['integrations','Payments & API keys','settings'],['ai','AI / NVIDIA NIM','sparkles']]],
+    ['PLATFORM',[['integrations','Payments & API keys','settings'],['ai','AI / NVIDIA NIM','sparkles'],['email','Email / SMTP','mail']]],
   ];
 
   async function handlePlanSave(p){
@@ -110,6 +110,7 @@ export default function PlatformAdmin(){
         {tab==='branding'&&<SiteBranding state={data.branding} onChanged={async(s)=>{setData({...data,branding:s});notify('Site icon updated.')}} onError={setError}/>}
       {deleteTarget&&<DeleteUserModal user={deleteTarget} busy={busy} onDeactivate={()=>deactivateUser(deleteTarget)} onDeleted={()=>deleteUser(deleteTarget)} onClose={()=>setDeleteTarget(null)}/>}
       {tab==='ai'&&<AISettings config={data.aiConfig} onSave={async(payload)=>{try{const r=await api.post('/auth/platform/ai-config/',payload);setData({...data,aiConfig:r});notify('NVIDIA AI configuration saved.')}catch(e){setError(e.message||'Could not save AI configuration')}}} onTest={async()=>{try{const r=await api.post('/auth/platform/ai-config/test/',{});notify(r.message||'NVIDIA AI connection successful.')}catch(e){setError(e.message||'NVIDIA AI connection failed')}}}/>}
+        {tab==='email'&&<EmailSettings config={data.emailConfig} onSave={async(payload)=>{try{const r=await api.post('/auth/platform/email-config/',payload);setData({...data,emailConfig:r});notify(r.in_use?'Email settings saved and now in use.':'Email settings saved. Not active yet.');}catch(e){setError(e.message||'Could not save email settings')}}} onTest={async(to)=>{try{const r=await api.post('/auth/platform/email-config/test/',to?{to}:{});notify(r.detail||'Test message sent.');}catch(e){setError(e.message||'Test send failed')}}}/>} 
         {tab==='integrations'&&<Integrations items={data.providers} onSave={async (payload)=>{try{await api.post('/auth/platform/payment-providers/',payload);await load();notify(`${payload.provider} payment settings saved.`)}catch(e){setError(e.message||'Could not save provider settings')}}} onToggle={async (provider,enabled)=>{try{await api.post(`/auth/platform/payment-providers/${provider}/toggle/`,{enabled});await load();notify(`${provider} ${enabled?'enabled':'disabled'}.`)}catch(e){setError(e.message||'Could not change provider state')}}}/>}
         {tab==='users'&&<Users items={filteredUsers} search={search} setSearch={setSearch} onDelete={setDeleteTarget} onToggle={(u)=>action(`/auth/platform/users/${u.id}/`,{is_active:!u.is_active},`${u.username} is now ${u.is_active?'inactive':'active'}.`,'patch')}/>} 
       {tab==='plans'&&<Plans plans={data.plans} onSave={handlePlanSave} onEdit={setPlanEdit}/>} 
@@ -300,6 +301,46 @@ function AISettings({config,onSave,onTest}){
     <div className="card"><div className="section-head"><div><h2>Security</h2><p>How HRCloudPay handles the AI provider configuration.</p></div></div><div className="drawer-mini-list"><div><strong>API key</strong><small>Encrypted at rest with the Django SECRET_KEY. Never returned to the frontend.</small></div><div><strong>Access</strong><small>Only platform superusers can view or change these settings.</small></div><div><strong>Tenant isolation</strong><small>Company users cannot change the provider, model, endpoint, or credentials.</small></div><div><strong>Audit</strong><small>Configuration changes and connection tests are recorded in the platform audit log.</small></div></div></div>
   </div>
 }
+
+function EmailSettings({config,onSave,onTest}){
+  const [form,setForm]=useState(null);
+  const [to,setTo]=useState('');
+  useEffect(()=>{if(config)setForm({...config,password:''})},[config]);
+  if(!form)return <div className="card page-loading">Loading email configuration...</div>;
+  const set=(key,value)=>setForm({...form,[key]:value});
+  // smtplib cannot negotiate STARTTLS on a socket that is already TLS, so the
+  // two are exclusive. Enforced here rather than only on the server so the admin
+  // is not offered a combination that is guaranteed to fail.
+  const setTls=(on)=>setForm({...form,use_tls:on,use_ssl:on?false:form.use_ssl});
+  const setSsl=(on)=>setForm({...form,use_ssl:on,use_tls:on?false:form.use_tls});
+  // `.admin-status` only defines active / pending / danger. Using a class it does
+  // not have would render an unstyled pill, so an unconfigured server borrows
+  // `danger` - it is the state that needs acting on.
+  const status=form.in_use?'active':form.configured?'pending':'danger';
+  const statusLabel=form.in_use?'In use':form.configured?'Saved, not active':'Not configured';
+  return <div className="control-grid">
+    <div className="card">
+      <div className="section-head"><div><div className="eyebrow">Platform email</div><h2>SMTP configuration</h2><p>HRCloudPay sends activation links, password resets and invitations through this server. Until it is active, mail is printed to the application log instead of being delivered.</p></div><span className={`admin-status ${status}`}>{statusLabel}</span></div>
+      <div className="form-row"><div><label>SMTP host</label><input value={form.host||''} onChange={e=>set('host',e.target.value)} placeholder="smtp.yourprovider.com"/></div><div><label>Port</label><input type="number" min="1" max="65535" value={form.port??587} onChange={e=>set('port',Number(e.target.value))}/></div></div>
+      <div className="form-row"><div><label>Username</label><input value={form.username||''} onChange={e=>set('username',e.target.value)} autoComplete="off"/></div><div><label>Password</label><input type="password" value={form.password||''} onChange={e=>set('password',e.target.value)} placeholder={form.password_set?'Leave blank to keep current password':'SMTP password or app password'} autoComplete="new-password"/></div></div>
+      <div className="form-row"><div><label>From address</label><input type="email" value={form.from_email||''} onChange={e=>set('from_email',e.target.value)} placeholder="no-reply@hrcloudpay.com"/></div><div><label>Timeout (seconds)</label><input type="number" min="1" max="300" value={form.timeout_seconds??30} onChange={e=>set('timeout_seconds',Number(e.target.value))}/></div></div>
+      <div className="form-row"><div><label className="checkbox-label"><input type="checkbox" checked={Boolean(form.use_tls)} onChange={e=>setTls(e.target.checked)}/> Use STARTTLS (usually port 587)</label></div><div><label className="checkbox-label"><input type="checkbox" checked={Boolean(form.use_ssl)} onChange={e=>setSsl(e.target.checked)}/> Use SSL / implicit TLS (usually port 465)</label></div></div>
+      <label className="checkbox-label"><input type="checkbox" checked={Boolean(form.is_active)} onChange={e=>set('is_active',e.target.checked)}/> Use these settings for sending</label>
+      <div className="modal-actions"><button className="btn btn-secondary" onClick={()=>onTest(to.trim()||undefined)} disabled={!form.in_use}>Send test message</button><button className="btn btn-primary" onClick={()=>onSave(form)}>Save email settings</button></div>
+      <label>Send a test to</label><input type="email" value={to} onChange={e=>setTo(e.target.value)} placeholder="Defaults to your own account email"/>
+    </div>
+    <div className="card">
+      <div className="section-head"><div><h2>Before you activate</h2><p>Two things to check, in this order.</p></div></div>
+      <div className="drawer-mini-list">
+        <div><strong>1. Save, then send a test</strong><small>A test button only works once the settings are saved and active. A wrong password found here costs nothing; found later it means a customer cannot activate their account.</small></div>
+        <div><strong>2. Check the from address</strong><small>Many providers reject a message whose From address they cannot verify, and the rejection looks like a send that succeeded.</small></div>
+        <div><strong>Encrypted at rest</strong><small>The SMTP password is encrypted with the same key used for payment provider secrets. It is never sent to the browser, and the audit log records only that it changed.</small></div>
+        <div><strong>Access</strong><small>Only platform superusers can read or change these settings. Company users cannot see them.</small></div>
+        <div><strong>Audit</strong><small>Saving settings and sending a test are both recorded in the platform audit log.</small></div>
+      </div>
+    </div>
+  </div>;
+}
 
 function Integrations({items,onSave,onToggle}){
   const [draft,setDraft]=useState({});
