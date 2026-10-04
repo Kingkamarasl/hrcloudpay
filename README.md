@@ -222,179 +222,136 @@ browser's automatic CSRF protection and makes every API call a CORS preflight.
 Serving both from Django keeps the cookie `SameSite=Lax` and the CSRF defence
 intact.
 
-Note that this rules out two *domains*, not two *services*. `vercel.json`
-declares Vercel Services — a Django service and a Vite service behind a single
-routing table on **one domain**, with `/api`, `/site-icon/`, `/admin/`,
-`/static/` and `/media/` rewritten to Django and everything else to the SPA.
-The browser still sees one origin, so the cookie and CSRF reasoning above
-holds unchanged and `VITE_API_URL` stays unset. What Services changes is who
-builds and serves the assets, not where the browser thinks it is.
+This is why the deployment is one service rather than two. A platform *can* run
+a Django service and a Vite service behind one routing table on one domain, with
+`/api`, `/site-icon/`, `/admin/`, `/static/` and `/media/` rewritten to Django
+and everything else to the SPA - the browser still sees a single origin, and the
+cookie and CSRF reasoning above holds unchanged. That arrangement was used here
+once and has since been removed in favour of building the SPA inside the
+container image, which is one service and one routing table instead of two and
+one. The rule that matters is the one above: one *origin*. How many services
+produce it is an implementation detail.
 
-### Deploying to Vercel
+### Deploying to Railway
 
-1. Set the project's framework to **Services** in Build and Deployment
-   settings. Both conditions are required — the framework setting *and* a
-   `services` key in `vercel.json` — otherwise Vercel silently ignores the
-   services block and builds the repo as a single app.
-2. Add the environment variables from `.env.example`. `DATABASE_URL`,
-   `SECRET_KEY`, `REDIS_URL`, `ALLOWED_HOSTS` and the `AWS_*` media variables
-   are all required; each fails in a way that is easy to misread (SQLite, or
-   per-worker rate limits, or files that vanish on redeploy).
-3. Deploy. The frontend service builds with
-   `npm run build -- --outDir dist --base /`, which puts assets under
-   `/assets/` instead of the `/static/` that Django serves in single-server
-   mode. Do not change `vite.config.js` — the default build is what the Docker
-   and local single-server paths depend on.
-4. Run the release order (`migrate`, then the two seeds, then
-   `collectstatic`) as a separate step. Vercel does not run these, and putting
-   them in a build command would race across concurrent and preview builds.
+One service, one image, built from the root `Dockerfile`. That file is a
+multi-stage build: Node compiles the SPA into `/app/frontend/dist`, the Python
+stage copies it to `frontend_dist/`, and `serve_frontend` plus WhiteNoise serve
+both the app and its assets from one origin. So there is no second frontend
+service, no rewrite table and no CORS to configure.
 
-The backend runs as a **container**, built from `backend/Dockerfile`. That is
-not a packaging preference, it is required by two features:
+Two things the image deliberately does *not* do, both of which matter more here
+than anywhere else:
 
-- **OCR.** `pytesseract` shells out to a `tesseract` binary. Vercel's Python
-  runtime has no system packages, so scanned PDFs would silently extract no
-  text at all. The image installs `tesseract-ocr`.
-- **Request duration.** PDF generation and document ingestion run inside a
-  function with a hard wall-clock limit, which a large payslip run or a bulk
-  ingestion job can exceed.
+- **Migrations do not run in the build.** This stage has no `DATABASE_URL`, so
+  `settings.py` falls back to SQLite and `migrate` would build a throwaway
+  database inside the image that never reaches production. Migrations belong in
+  a release step - see below.
+- **`db.sqlite3` is removed after `collectstatic`.** At least one
+  `AppConfig.ready()` opens a connection, so Django creates the file even though
+  nothing is written to it. An image carrying an empty database boots cleanly
+  when `DATABASE_URL` is missing at runtime and serves an empty application
+  rather than failing loudly.
 
-The trade is a slower cold start. Going back to the Python runtime means
-replacing the `runtime` key with a WSGI `entrypoint` of
-`hrcloudpay.wsgi:application`, and it costs both features above.
+#### Service settings
 
-Two things about the container are easy to get wrong:
+| Setting | Value |
+|---|---|
+| Root directory | repository root (`/`) |
+| Builder | Dockerfile (Railway detects it) |
+| Start command | leave empty - the Dockerfile `CMD` binds `$PORT` |
+| Release command | see below |
 
-- Its build context is `backend/`, not the repository root, so paths inside
-  `backend/Dockerfile` are relative to `backend/` and that directory carries
-  its own `.dockerignore`. A `COPY backend/...` line in that file resolves to
-  `backend/backend/...` and fails the build.
-- It builds the backend only. The root `Dockerfile` still builds frontend and
-  backend into one image served entirely by Django, which is the right shape
-  for a container host or a VM and is what `docker-compose` uses. The two
-  coexist because they deploy different things: on Vercel the Vite service has
-  already built and is already serving the SPA, so building it again into the
-  backend image would add some fifty chunks that image never serves.
+Railway injects `PORT` and routes traffic to it, 8080 by default. The `CMD`
+reads `${PORT:-8000}`. A hardcoded port builds successfully and then 502s on
+every request with nothing in the build log to explain it.
 
-Uploaded files are served by `hrcloudpay.views.serve_media` in every environment,
-not only under `DEBUG`. Under the old DEBUG-only `static()` route, production
-served no uploaded file at all — company logos and employee photos 404 — and
-merely enabling `static()` in production would have published every identity,
-medical and disciplinary document to anyone holding the URL, since `static()`
-performs no identity check. `serve_media` keeps the route and applies per-kind
-role rules (see `backend/hrcloudpay/media_access.py`); `finance` cannot fetch an
-employee's medical certificate, and no tenant can fetch another tenant's file.
+#### Variables
 
-Note that `create_backup` backs up the **database only** — the rows name each
-uploaded file but do not contain it. Back up the bucket too, and restore both
-into a scratch environment to confirm the documents actually open.
+Add the Postgres plugin first. Railway then injects `DATABASE_URL` for you as a
+reference to the plugin - do not paste the connection string in by hand, or the
+next database replacement leaves the app pointing at the old one. The same
+applies to the Redis plugin.
 
-### Deploying to Spaceship shared hosting (hrcloudpay.com)
-
-Shared hosting runs Passenger, not the container. The good news is that this
-application's default shape is the one shared hosting wants: Django serves the
-built SPA from `backend/frontend_dist` through `serve_frontend`, and WhiteNoise
-serves the assets, so there is one origin, no Nginx to configure and no rewrite
-rules. `backend/Dockerfile` and `vercel.json` are unused here.
-
-Prerequisites, in the order they can block you:
-
-1. **Python 3.10 or newer** in *Setup Python App*. Django 5.2 will not start on
-   3.9. Check this first; if the selector tops out lower, the fix is a Django
-   downgrade, not a configuration change.
-2. **Postgres reachable over TCP.** `_database_from_url` can only express a
-   hostname and a port - not a unix socket path - so a host that hands you
-   `/tmp/psql.sock` cannot be configured through `DATABASE_URL`. Find out now,
-   not halfway through the first deploy.
-3. **An active SSL certificate** for `hrcloudpay.com`. `SECURE_SSL_REDIRECT`
-   defaults to on, so activating it before the certificate works turns every
-   request into a redirect to nowhere.
-4. **SSH access**, so deploys are a `git pull` rather than a file upload.
-
-Build the frontend locally; there is no Node on the host, and there does not need
-to be.
-
-```
-cd frontend && npm ci && npm run build      # writes ../backend/frontend_dist
-```
-
-Create the Passenger application with **Application root = `backend/`** and
-**Startup file = `passenger_wsgi.py`**, then install into the generated virtualenv:
-
-```
-source ~/virtualenv/<app>/<version>/bin/activate
-pip install -r requirements.txt
-```
-
-#### The `.env` for hrcloudpay.com
-
-Put this at `backend/.env` and `chmod 600`. It is read by python-decouple, which
-searches upward from `backend/hrcloudpay/settings.py`.
+Set the rest as service variables:
 
 ```
 SECRET_KEY=<generate: python -c "from django.core.management.utils import get_random_secret_key as k; print(k())">
 DEBUG=False
-ALLOWED_HOSTS=hrcloudpay.com,www.hrcloudpay.com
+ALLOWED_HOSTS=hrcloudpay.com
 FRONTEND_URL=https://hrcloudpay.com
 BACKEND_PUBLIC_URL=https://hrcloudpay.com
-DATABASE_URL=postgres://<user>:<password>@localhost:<port>/<dbname>
 SECURE_SSL_REDIRECT=True
 DEFAULT_FROM_EMAIL=no-reply@hrcloudpay.com
+AWS_STORAGE_BUCKET_NAME=<bucket>
+AWS_S3_REGION_NAME=<region>
+AWS_ACCESS_KEY_ID=<key>
+AWS_SECRET_ACCESS_KEY=<secret>
+EMAIL_BACKEND=<smtp backend>
 CORS_ALLOWED_ORIGINS=
 ```
 
-**`FRONTEND_URL` is the one that bites.** It builds company activation links
-(`accounts/views.py`), the post-payment redirect (`accounts/payment_services.py`)
-and OAuth return URLs (`integrations/oauth.py`). The shipped default is
-`http://localhost:5173`, so a deployment that copies `.env.example` faithfully
-sends every activation email to a link that resolves on nobody's machine. Set it
-to `https://hrcloudpay.com` and the accounts work.
+**`FRONTEND_URL` is the value that bites**, and it ships undocumented as a plain
+`http://localhost:5173`. It builds company activation links
+(`accounts/views.py`, `accounts/platform.py`), the post-payment redirect
+(`accounts/payment_services.py`) and OAuth return URLs (`integrations/oauth.py`).
+A deployment that copied `.env.example` faithfully sends every activation email
+to a link that resolves nowhere, and no account can be activated. Set it to
+`https://hrcloudpay.com` with no trailing slash.
 
-`CORS_ALLOWED_ORIGINS` can be empty: the SPA and the API are one origin, so no
-cross-origin request is ever made. Leaving the localhost default in place is
-harmless but misleading.
+`CORS_ALLOWED_ORIGINS` can be empty: the SPA and the API share an origin, so no
+cross-origin request is ever made. Leaving the localhost default is harmless but
+misleading.
 
-Pick one hostname and redirect the other to it. Serving the site on both
-`hrcloudpay.com` and `www.hrcloudpay.com` splits sessions and duplicates every
-page; Spaceship's *Domains* section can redirect `www` to the apex.
+Set `AWS_STORAGE_BUCKET_NAME`. `MEDIA_ROOT` is a directory on whichever machine
+runs Django, so without the bucket every uploaded file is lost on the next
+deploy - employee documents, contracts, payslip attachments and knowledge-base
+sources.
 
-#### Two silent failure modes
+#### Release command
 
-**SQLite.** With `DATABASE_URL` empty, `settings.py` falls through to SQLite and
-the site comes up looking completely healthy with no employees, no payslips and
-no audit rows. If the first thing you see is a working login page and empty
-dashboards, check that `.env` was actually found before anything else.
-
-**Uploaded files.** `MEDIA_ROOT` is a directory on whichever machine runs Django,
-so without `AWS_STORAGE_BUCKET_NAME` every uploaded file is lost on the next
-deploy. Employee documents, contracts, payslip attachments and knowledge-base
-sources all live there.
-
-#### OCR of scanned documents
-
-There is no `tesseract` binary and no way to install one - no root, no package
-manager - so scanned and image-only PDFs cannot be read. Digital PDFs are
-unaffected, because they carry a text layer, and DOCX never involved OCR. The
-upload refuses such a document and names the unreadable pages rather than
-indexing it with pages missing.
-
-#### Every deploy
+This runs against the real database before traffic shifts, which is the only
+place `migrate` can safely live:
 
 ```
-cd ~/hrcloudpay && git pull
-source ~/virtualenv/<app>/<version>/bin/activate
-cd backend
-python manage.py migrate --noinput
-python manage.py collectstatic --noinput --clear
-python manage.py seed_country_rules
-python manage.py seed_filing_rules
-python manage.py seal_audit_backlog        # first deploy only
-python manage.py verify_audit_chain
-touch ~/hrcloudpay/backend/tmp/restart.txt
+cd backend && python manage.py migrate --noinput && python manage.py seed_country_rules && python manage.py seed_filing_rules
 ```
 
-Passenger caches the loaded application. Skipping the restart means the old code
-keeps serving, which looks like the deploy silently not working.
+`seed_country_rules` and `seed_filing_rules` are not optional - tax and filing
+tables are what a payslip is calculated from, and an empty one produces a
+plausible payslip with the wrong numbers.
+
+Once, on the first deploy only, seal the audit backlog:
+
+```
+python manage.py seal_audit_backlog
+```
+
+It is a management command rather than a data migration on purpose. A migration
+would fire implicitly on every deploy and would imply the historical rows had
+been verified, which they have not.
+
+#### Custom domain
+
+Attach `hrcloudpay.com` to the service and set the DNS records Railway shows
+you. **Pick one hostname.** Serving both `hrcloudpay.com` and
+`www.hrcloudpay.com` splits sessions and duplicates every page - a visitor
+bounces between them mid-session and the cookie is set twice. Redirect `www` to
+the apex.
+
+#### Health checks
+
+Leave the healthcheck path empty. The obvious candidate,
+`/api/auth/platform/system-health/`, requires `IsAdminUser`, so an
+unauthenticated probe gets a 403 and Railway would mark a perfectly healthy
+service as down. That endpoint is an operator tool, not a liveness probe.
+
+#### What this host does not have
+
+Nothing, compared with a container platform - tesseract is installed in the
+image, so OCR of scanned documents works. That is the one capability a shared
+host cannot provide and the reason this deployment target is a better fit than
+one.
 
 ### Release order
 

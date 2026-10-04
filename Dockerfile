@@ -56,6 +56,11 @@ RUN SECRET_KEY=v3rc3l-build-time-only-not-a-runtime-key \
 #   python manage.py seed_filing_rules
 # See the "Release order" section of README.md.
 
+# Railway injects PORT and routes traffic to it, which is 8080 by default. A
+# hardcoded 8000 builds cleanly and then 502s on every request, with nothing in
+# the build log to explain why - the image is fine, it is simply listening on
+# the wrong port. The 8000 fallback keeps the image usable under a plain
+# `docker run` for a smoke test.
 EXPOSE 8000
 
-CMD ["gunicorn", "hrcloudpay.wsgi", "--bind", "0.0.0.0:8000", "--workers", "4"]
+CMD ["sh", "-c", "exec gunicorn hrcloudpay.wsgi --bind 0.0.0.0:${PORT:-8000} --workers 4 --access-logfile -"]
