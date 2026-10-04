@@ -5,6 +5,13 @@
 .env
 .env.*
 !.env.example
+# Templates that are not named exactly `.env.example`. Without this,
+# deploy/.env.production.example matched `.env.*` above and was dropped from the
+# deploy commit - `git add` skips ignored files without a word, so the file
+# existed on disk and was named in the instructions, but was absent from every
+# clone. `cp deploy/.env.production.example .env` then failed on a fresh server.
+# Broad on purpose: anything ending `.example` is a template by definition.
+!*.example
 
 # Local database. Never commit: it contains every employee, payslip and
 # subscription row in the dev database.
