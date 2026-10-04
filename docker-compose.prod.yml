@@ -29,6 +29,19 @@ services:
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-hrcloudpay.com}
       FRONTEND_URL: https://hrcloudpay.com
       BACKEND_PUBLIC_URL: https://hrcloudpay.com
+      # Caddy is the only thing in front of Django, and reverse_proxy sets
+      # X-Forwarded-For to the real client address.
+      #
+      # Without this, client_ip() falls back to REMOTE_ADDR - which here is
+      # Caddy's own Docker address, 172.x.x.x - and every connection card renders
+      # its headings and no values, because a private address short-circuits the
+      # geolocation lookup before it is ever attempted. The card looked broken
+      # with no error anywhere, which is the worst way for it to fail.
+      #
+      # Trusting the header is safe here specifically because this service
+      # publishes no ports: Caddy is the only route in, so nothing can reach
+      # Django and forge the header for itself.
+      TRUSTED_PROXY_COUNT: ${TRUSTED_PROXY_COUNT:-1}
       SECURE_SSL_REDIRECT: "True"
       # Empty is correct: the SPA and the API share one origin, so no
       # cross-origin request is ever made.
