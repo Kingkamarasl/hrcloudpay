@@ -1,6 +1,11 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 
+from .import_views import (
+    AttendanceImportApplyView,
+    AttendanceImportPreviewView,
+    AttendanceImportTemplateView,
+)
 from .views import AttendanceViewSet, BulkMarkView, ClockView
 
 router = DefaultRouter()
@@ -11,4 +16,10 @@ urlpatterns = [
     # `records/<pk>/` tries to read "clock" or "bulk" as a primary key.
     path('records/clock/', ClockView.as_view(), name='attendance-clock'),
     path('records/bulk/', BulkMarkView.as_view(), name='attendance-bulk-mark'),
+    path('imports/preview/', AttendanceImportPreviewView.as_view(),
+         name='attendance-import-preview'),
+    path('imports/apply/', AttendanceImportApplyView.as_view(),
+         name='attendance-import-apply'),
+    path('imports/template/', AttendanceImportTemplateView.as_view(),
+         name='attendance-import-template'),
 ] + router.urls

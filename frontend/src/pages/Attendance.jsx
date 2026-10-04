@@ -6,6 +6,13 @@ import Icon from '../components/Icon';
 
 const labels = { present: 'Present', absent: 'Absent', half_day: 'Half day', leave: 'On leave' };
 
+const ACTION_LABELS = {
+  create: 'Create',
+  update: 'Update',
+  unchanged: 'No change',
+  error: 'Problem',
+};
+
 const EMPTY_FORM = { employee: '', date: new Date().toISOString().slice(0, 10), status: 'present', check_in: '', check_out: '', crossed_midnight: false };
 
 /** "09:00" -> 540, or null for a blank/invalid field. */
@@ -51,6 +58,9 @@ export default function Attendance() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [bulk, setBulk] = useState({ department: '', date: new Date().toISOString().slice(0, 10), status: 'absent' });
   const [range, setRange] = useState({ start: '', end: '' });
+  const [importFile, setImportFile] = useState(null);
+  const [plan, setPlan] = useState(null);
+  const [importResult, setImportResult] = useState(null);
 
   const isEmployee = user?.role === 'employee';
 
@@ -155,6 +165,71 @@ export default function Attendance() {
 
   const preview = workedPreview(form.check_in, form.check_out, form.crossed_midnight);
   const todayRecord = records.find(r => r.date === new Date().toISOString().slice(0, 10));
+
+  async function downloadTemplate() {
+    setError('');
+    try {
+      const { blob, disposition } = await api.downloadFile('/attendance/imports/template/');
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = (disposition || '').match(/filename="?([^"]+)"?/)?.[1]
+        || 'attendance-template.xlsx';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message || 'Could not download the template.');
+    }
+  }
+
+  async function previewImport(event) {
+    event.preventDefault();
+    if (!importFile) return;
+    setError('');
+    setNotice('');
+    setImportResult(null);
+    setBusy(true);
+    try {
+      const data = new FormData();
+      data.append('file', importFile);
+      // Preview only. Nothing is written until this plan is confirmed, which
+      // is the whole point - a month-end upload is not something to apply
+      // blind.
+      setPlan(await api.upload('/attendance/imports/preview/', data));
+    } catch (err) {
+      setPlan(null);
+      setError(err.message || 'Could not read that file.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function applyImport() {
+    if (!plan) return;
+    setError('');
+    setBusy(true);
+    try {
+      const result = await api.post('/attendance/imports/apply/', {
+        preview_token: plan.preview_token,
+      });
+      setImportResult(result);
+      setPlan(null);
+      setImportFile(null);
+      setNotice(
+        `Imported ${result.created} new`
+        + (result.updated ? ` and updated ${result.updated}` : '')
+        + (result.refused ? `, ${result.refused} rows refused` : '')
+        + '.',
+      );
+      await load();
+    } catch (err) {
+      setError(err.message || 'The import could not be applied.');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div className="workspace-page">
@@ -319,6 +394,118 @@ export default function Attendance() {
               </div>
             </div>
           </form>
+        </section>
+      )}
+
+      {!isEmployee && (
+        <section className="panel">
+          <div className="panel-head">
+            <div>
+              <h2>Import a spreadsheet</h2>
+              <p>
+                For a month kept in Excel. Nothing is saved until you have seen
+                what the file would change.
+              </p>
+            </div>
+            <button className="btn" type="button" onClick={downloadTemplate}>
+              <Icon name="file" size={15} />Download template
+            </button>
+          </div>
+          <form onSubmit={previewImport}>
+            <div className="form-row">
+              <div>
+                <label htmlFor="attendance-file">Spreadsheet (.xlsx or .csv)</label>
+                <input
+                  id="attendance-file"
+                  type="file"
+                  accept=".xlsx,.xlsm,.csv"
+                  onChange={e => {
+                    setImportFile(e.target.files?.[0] ?? null);
+                    setPlan(null);
+                    setImportResult(null);
+                  }}
+                />
+              </div>
+              <div className="form-action">
+                <button className="btn" type="submit" disabled={busy || !importFile}>
+                  Check file
+                </button>
+              </div>
+            </div>
+          </form>
+
+          {plan && (
+            <div className="table-wrap">
+              <p>
+                <strong>{plan.filename}</strong> — {plan.total_rows} rows read.{' '}
+                <span className="status-dot status-present"><i />{plan.summary.create} to create</span>{' '}
+                <span className="status-dot status-half_day"><i />{plan.summary.update} to update</span>{' '}
+                <span className="status-dot status-present"><i />{plan.summary.unchanged} unchanged</span>{' '}
+                <span className="status-dot status-absent"><i />{plan.summary.error} with problems</span>
+              </p>
+              <table className="modern-table">
+                <thead>
+                  <tr>
+                    <th>Row</th>
+                    <th>Employee</th>
+                    <th>Date</th>
+                    <th>Status</th>
+                    <th>In</th>
+                    <th>Out</th>
+                    <th>Will</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {plan.rows.slice(0, 50).map(row => (
+                    <tr key={row.row}>
+                      <td>{row.row}</td>
+                      <td>
+                        <strong>{row.employee_name || row.employee_ref}</strong>
+                        {row.errors.length > 0 && (
+                          <small className="status-dot status-absent">
+                            <i />{row.errors.join(' ')}
+                          </small>
+                        )}
+                      </td>
+                      <td>{row.date ?? '—'}</td>
+                      <td>{row.status ? (labels[row.status] || row.status) : '—'}</td>
+                      <td>{row.check_in ?? '—'}</td>
+                      <td>{row.check_out ?? '—'}{row.crossed_midnight ? ' +1' : ''}</td>
+                      <td>{ACTION_LABELS[row.action] || row.action}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {plan.rows.length > 50 && (
+                <p><small>Showing the first 50 of {plan.rows.length} rows.</small></p>
+              )}
+              <div className="form-row">
+                <div className="form-action">
+                  <button
+                    className="btn btn-primary"
+                    type="button"
+                    disabled={busy || plan.summary.create + plan.summary.update === 0}
+                    onClick={applyImport}
+                  >
+                    Apply {plan.summary.create + plan.summary.update} rows
+                  </button>
+                  <button className="btn" type="button" onClick={() => setPlan(null)}>
+                    Discard
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {importResult && (
+            <p>
+              Created {importResult.created}, updated {importResult.updated},{' '}
+              unchanged {importResult.unchanged}, refused {importResult.refused}.
+              {importResult.errors?.length > 0 && (
+                <span> {importResult.errors.join(' ')}</span>
+              )}
+            </p>
+          )}
         </section>
       )}
 
