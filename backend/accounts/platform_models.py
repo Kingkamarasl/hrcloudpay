@@ -46,6 +46,61 @@ class AuditLog(models.Model):
     def __str__(self):
         return f'{self.created_at} {self.actor} {self.action}'
 
+    def _seal(self):
+        """Link this record into the chain and write its digest.
+
+        Called after the INSERT, not before, because `created_at` is covered by
+        the digest and `auto_now_add` only assigns it during the insert. Hashing
+        a predicted timestamp would produce a digest that never matches the row
+        actually stored, and every record would read as tampered.
+
+        The chain state row is locked so two concurrent writers cannot claim the
+        same sequence number. Locking it before reading `last_sequence` and
+        releasing after the update is the only ordering that cannot deadlock:
+        every writer takes the same lock first, so there is no cycle to form.
+        """
+        from django.db import transaction
+
+        from .audit_chain import GENESIS_HASH, compute_integrity_hash
+
+        with transaction.atomic():
+            state = AuditChainState.objects.select_for_update().get(key='global')
+            self.chain_sequence = state.last_sequence + 1
+            self.previous_hash = state.last_hash or GENESIS_HASH
+            self.integrity_hash = compute_integrity_hash(self)
+
+            AuditLog.objects.filter(pk=self.pk).update(
+                chain_sequence=self.chain_sequence,
+                previous_hash=self.previous_hash,
+                integrity_hash=self.integrity_hash,
+            )
+            state.last_sequence = self.chain_sequence
+            state.last_hash = self.integrity_hash
+            state.save(update_fields=['last_sequence', 'last_hash'])
+
+    def save(self, *args, **kwargs):
+        """Seal new records into the chain; never re-seal existing ones.
+
+        Re-sealing on update would be actively dangerous: anyone able to edit an
+        audit row through the ORM could recompute its digest and leave no trace.
+        So an update leaves the stored digest alone, and a legitimate edit
+        therefore shows up as tampering - which for an append-only log is the
+        correct outcome, not a bug to be smoothed over.
+        """
+        from .audit_chain import GENESIS_HASH
+
+        adding = self._state.adding
+        if adding and not self.chain_sequence:
+            # Created outside the lock so two writers racing on the very first
+            # audit row of a fresh database do not both try to insert it.
+            AuditChainState.objects.get_or_create(
+                key='global', defaults={'last_sequence': 0, 'last_hash': GENESIS_HASH},
+            )
+            super().save(*args, **kwargs)
+            self._seal()
+            return
+        super().save(*args, **kwargs)
+
 
 class AuditChainState(models.Model):
     key = models.CharField(max_length=32, unique=True, default='global')

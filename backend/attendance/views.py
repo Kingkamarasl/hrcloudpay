@@ -136,6 +136,14 @@ class BulkMarkView(APIView):
             raise PermissionDenied(
                 'Only HR, an owner, or a department manager can mark attendance '
                 'in bulk. Employees can clock in for themselves.')
+        if user.role == 'department_manager' and not user.managed_department:
+            # Without this the department filter matches nothing and the
+            # response is an empty success - which reads as "nobody in your
+            # department was marked" rather than "your account is not set up".
+            raise PermissionDenied(
+                'Your account has no department set, so there is no team whose '
+                'attendance you can mark. Ask an owner or admin to set it on the '
+                'Team page - it has to match an employee department exactly.')
         payload = request.data
         try:
             day = date_cls.fromisoformat(str(payload.get('date', '')))

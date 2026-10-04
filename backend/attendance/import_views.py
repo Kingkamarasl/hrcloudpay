@@ -53,6 +53,20 @@ def _scope_checker(request):
     return lambda employee: rule.employee_in_scope(request, employee)
 
 
+def _no_department_configured(request):
+    """True for a department manager whose `managed_department` is blank.
+
+    Attendance is scoped per department, and `managed_department` is free text an
+    admin types on the Team page. When it is blank - or spelled differently from
+    `Employee.department` - every row of an uploaded file fails the scope check,
+    and the manager sees a file full of "you cannot record attendance for this
+    employee". That reads as a permissions problem and is really a
+    misconfigured account, so it gets its own message.
+    """
+    user = request.user
+    return user.role == 'department_manager' and not user.managed_department
+
+
 def _uploaded_file(request):
     upload = request.FILES.get('file')
     if upload is None:
@@ -101,6 +115,14 @@ class AttendanceImportPreviewView(APIView):
             )
         except SpreadsheetError as exc:
             raise ValidationError({'file': str(exc)})
+
+        if _no_department_configured(request):
+            raise ValidationError({
+                'file': 'Your account has no department set, so there is no '
+                        'team whose attendance you can record. Ask an owner or '
+                        'admin to set your department on the Team page - it has '
+                        'to match an employee department exactly.',
+            })
 
         token = uuid.uuid4().hex
         cache.set(

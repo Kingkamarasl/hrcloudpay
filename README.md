@@ -301,8 +301,24 @@ python manage.py seed_country_rules           # 3. must complete before any payr
 python manage.py seed_filing_rules            # 4. populates the statutory filing calendar
 python manage.py collectstatic --noinput
 python manage.py check --deploy               # 5. reports regional.W001 if step 3 was skipped
+python manage.py verify_audit_chain           # 6. must report a verified chain
 gunicorn hrcloudpay.wsgi
 ```
+
+**If step 6 reports `unchained_record`.** That means audit rows exist that were
+written before `AuditLog.save()` began sealing them, which is every row on a
+database that was in use before the chain writer landed. Run this once:
+
+```
+python manage.py seal_audit_backlog --dry-run   # see what would be sealed
+python manage.py seal_audit_backlog
+```
+
+It enters those rows into the chain, in the order they were written. It does not
+claim they were verified at the time — they were written when there was no
+mechanism that could have detected tampering either way. What it does give you
+is one unbroken chain, and detection of any modification from here on. A new
+database never needs it.
 
 Steps 2–5 run against the *deployed* database, so `DATABASE_URL` must point at
 it. They deliberately do not run inside `Dockerfile`: that build stage has no
