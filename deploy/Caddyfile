@@ -2,7 +2,7 @@
 #
 # Caddy obtains and renews a Let's Encrypt certificate on its own, so there is
 # no cert to install, expire or renew by hand. It only succeeds if ports 80 and
-# 443 are open in the OCI security list AND the DNS A record for the domain
+# 443 are open in the host firewall AND the DNS A record for the domain
 # already points at this host - ACME needs to reach it over plain HTTP first.
 
 # The apex is canonical.
