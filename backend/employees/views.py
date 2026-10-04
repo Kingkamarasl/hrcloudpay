@@ -94,6 +94,25 @@ class DepartmentViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         audit(self.request.user, 'delete', f'Deleted department {instance.name}', instance.company, 'department', instance.id, request=self.request); instance.delete()
 
+# Columns the CSV import reads. Anything else in the header is ignored, and the
+# import says so rather than dropping it quietly: a misspelled optional column
+# is the dangerous kind, because the row still imports and the field just comes
+# out empty. A typo'd `base_salary` is a person added at no salary with no
+# complaint from the system.
+IMPORT_COLUMNS = {
+    'first_name', 'last_name', 'email', 'phone', 'job_title', 'department',
+    'base_salary', 'hire_date', 'employment_status', 'employment_category',
+}
+
+# Read from the header but deliberately not applied. Employee codes are allocated
+# by the system (Employee.allocate_employee_code); EmployeeSerializer.create
+# discards a client-supplied one so a re-import cannot overwrite the code a
+# payslip, an attendance record or a contract already points at.
+IMPORT_SYSTEM_ASSIGNED_COLUMNS = {
+    'employee_code': 'employee codes are allocated by the system and are not overwritten',
+}
+
+
 class EmployeeViewSet(viewsets.ModelViewSet):
     serializer_class = EmployeeSerializer
     permission_classes = [IsCompanyMember, IsCompanyActive, CanManageHR]
@@ -340,13 +359,49 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         reader = csv.DictReader(decoded_file)
         company = request.user.company
 
+        # Normalise the header once. A spreadsheet saved by Excel routinely
+        # pads and re-cases column names, and the row lookup below must read the
+        # same names the report below names - otherwise a padded ` First_Name `
+        # imports as an empty person while the response claims nothing was
+        # ignored.
+        header_map = {
+            original: original.strip().lower()
+            for original in (reader.fieldnames or [])
+            if original is not None
+        }
+        headers = sorted(set(header_map.values()))
+
+        # The old code passed this column's cell straight through as
+        # `department_obj`, a foreign key, so every row carrying one failed with
+        # "Incorrect type" - no working file could contain it. Now that it would
+        # be skipped silently, say so: an employee imported with no department
+        # and no explanation is worse than one that refused to import.
+        if 'department_obj' in headers:
+            return Response({
+                'detail': (
+                    'Rename the department_obj column to department. It holds a '
+                    'department name matched against this company\'s departments, '
+                    'not an id.'
+                ),
+            }, status=400)
+
+        ignored_columns = sorted(set(headers) - IMPORT_COLUMNS)
+        system_assigned = sorted(
+            h for h in headers if h in IMPORT_SYSTEM_ASSIGNED_COLUMNS)
+
         created_count = 0
         updated_count = 0
         failures = []
         touched_ids = []
 
         with transaction.atomic():
-            for i, row in enumerate(reader, start=1):
+            for i, raw_row in enumerate(reader, start=1):
+                # A ragged row parks cells that had no header under a None key.
+                row = {
+                    header_map.get(key, key.strip().lower()): value
+                    for key, value in raw_row.items()
+                    if key is not None
+                }
                 try:
                     if not row.get('first_name') or not row.get('last_name') or not row.get('email'):
                         failures.append({
@@ -425,13 +480,23 @@ class EmployeeViewSet(viewsets.ModelViewSet):
                 request=request,
             )
 
-        return Response({
+        response = {
             'imported': created_count,
             'created': created_count,
             'updated': updated_count,
             'failed': len(failures),
             'failures': failures,
-        }, status=201 if (created_count or updated_count) else 400)
+        }
+        if ignored_columns:
+            response['ignored_columns'] = ignored_columns
+        if system_assigned:
+            response['notes'] = [
+                IMPORT_SYSTEM_ASSIGNED_COLUMNS[column]
+                for column in system_assigned
+            ]
+
+        return Response(
+            response, status=201 if (created_count or updated_count) else 400)
 
     @action(detail=False, methods=['post'], url_path='bulk-salary-update')
     def bulk_salary_update(self, request):

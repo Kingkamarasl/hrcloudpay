@@ -210,3 +210,71 @@ class ImportAuditTests(EmployeeImportTestCase):
 
         self.assertEqual(
             AuditLog.objects.filter(target_type='employee').count(), 0)
+
+
+class ImportHeaderTests(EmployeeImportTestCase):
+    """The header is inspected rather than ignored.
+
+    Every optional column is optional, so a misspelled one imports happily and
+    the field simply comes out empty. `base_salary` is the one that costs money,
+    so the import reports what it did not read instead of dropping it quietly.
+    """
+
+    def test_the_old_department_obj_header_is_refused_with_guidance(self):
+        headers = ['first_name', 'last_name', 'email', 'department_obj']
+        rows = [['Ada', 'One', 'ada@example.com', 'Sales']]
+
+        response = self.do_import(upload(rows, headers=headers))
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('department', str(response.data['detail']))
+        self.assertEqual(Employee.objects.count(), 0)
+
+    def test_a_misspelled_column_is_reported_rather_than_dropped(self):
+        headers = ['first_name', 'last_name', 'email', 'base_salery']
+        rows = [['Ada', 'One', 'ada@example.com', '500000']]
+
+        response = self.do_import(upload(rows, headers=headers))
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['created'], 1)
+        self.assertIn('base_salery', response.data['ignored_columns'])
+        # The row still imported - only the typo is reported, not punished.
+        self.assertEqual(Employee.objects.count(), 1)
+
+    def test_a_recognised_file_reports_nothing_ignored(self):
+        response = self.do_import()
+
+        self.assertNotIn('ignored_columns', response.data)
+        self.assertNotIn('notes', response.data)
+
+    def test_a_system_assigned_column_is_read_but_not_applied(self):
+        """Supplying employee_code must not overwrite an allocated code.
+
+        Payslips, attendance records and contracts all reference the code, so
+        letting an import rewrite it would silently repoint them.
+        """
+        headers = ['first_name', 'last_name', 'email', 'employee_code']
+        rows = [['Ada', 'One', 'ada@example.com', 'MY-OWN-CODE']]
+
+        first = self.do_import(upload(rows, headers=headers))
+        ada = Employee.objects.get()
+        allocated = ada.employee_code
+
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertNotEqual(allocated, 'MY-OWN-CODE')
+        self.assertEqual(first.data['notes'], [
+            'employee codes are allocated by the system and are not overwritten'])
+
+        # And a re-import keeps the same code rather than reallocating it.
+        self.do_import(upload(rows, headers=headers))
+        self.assertEqual(Employee.objects.get().employee_code, allocated)
+
+    def test_header_matching_ignores_case_and_padding(self):
+        headers = [' First_Name ', 'LAST_NAME', 'Email', ' base_salary ']
+        rows = [['Ada', 'One', 'ada@example.com', '500000']]
+
+        response = self.do_import(upload(rows, headers=headers))
+
+        self.assertEqual(response.data['created'], 1, response.data)
+        self.assertNotIn('ignored_columns', response.data)
