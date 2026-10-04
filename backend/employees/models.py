@@ -1,6 +1,7 @@
 from django.conf import settings
 from django.db import models
 from django.db.models import Q
+from django.db.models.functions import Lower
 from django.utils import timezone
 
 from accounts.models import Company
@@ -92,6 +93,28 @@ class Employee(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=['company', 'employee_code'], name='unique_employee_code_per_company'),
+            # One employee per email address per company.
+            #
+            # The existing (company, employee_code) index cannot stand in for this.
+            # Codes are allocated with a random four-digit suffix per row
+            # (allocate_employee_code), so a duplicate person never collides on the
+            # code and the index stays silent - which is how importing one file
+            # twice produced two employees per row.
+            #
+            # On Lower(email): the CSV import matches addresses with email__iexact,
+            # so `Ada@example.com` and `ada@example.com` are already the same
+            # person there. A case-sensitive index would let both exist anyway,
+            # putting the database and the import into disagreement about who
+            # somebody is - the same class of bug, one layer down.
+            #
+            # Excludes the empty string: the address is the identity, and two
+            # employees who have not supplied one are not colliding.
+            models.UniqueConstraint(
+                Lower('email'),
+                'company',
+                condition=~models.Q(email=''),
+                name='unique_employee_email_per_company_ci',
+            ),
         ]
         ordering = ['-created_at']
 

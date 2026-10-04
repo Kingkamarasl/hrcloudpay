@@ -106,6 +106,47 @@ class EmployeeSerializer(serializers.ModelSerializer):
     def get_warning_letter_count(self, obj): return obj.warning_letters.count()
     def get_emergency_contact_count(self, obj): return obj.emergency_contacts.count()
     def get_employment_event_count(self, obj): return obj.employment_events.count()
+
+    def validate_email(self, value):
+        """One employee per address per company.
+
+        The database enforces this (unique_employee_email_per_company_ci, on
+        Lower(email)) but an IntegrityError arriving from a save is a 500 with a
+        stack trace in the response. Catching it here turns the same condition
+        into a 400 that names the clash, which is what a person filling in a
+        form can act on.
+
+        The index is on Lower(email), so the check has to be case-insensitive
+        too - matching only exactly would let `Ada@example.com` through here and
+        straight into the constraint.
+
+        The constraint remains the authority: this check is a query, so two
+        concurrent requests can both pass it. The index is what makes that race
+        safe, and it is why this is validation and not a replacement.
+        """
+        from .models import Employee
+
+        email = (value or '').strip()
+        if not email:
+            return value
+
+        request = self.context.get('request')
+        company = getattr(request.user, 'company', None) if request else None
+        if company is None:
+            return value
+
+        clash = Employee.objects.filter(company=company, email__iexact=email)
+        if self.instance is not None:
+            clash = clash.exclude(pk=self.instance.pk)
+        clash = clash.first()
+
+        if clash is not None:
+            raise serializers.ValidationError(
+                'An employee with this email address already exists in your '
+                'company (%s, %s).' % (clash.full_name, clash.employee_code)
+            )
+        return value
+
     def create(self, validated_data):
         from .models import Employee
         company = self.context['request'].user.company
