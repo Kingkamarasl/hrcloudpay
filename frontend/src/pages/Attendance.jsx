@@ -49,6 +49,7 @@ export default function Attendance() {
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
+  const [bulk, setBulk] = useState({ department: '', date: new Date().toISOString().slice(0, 10), status: 'absent' });
   const [range, setRange] = useState({ start: '', end: '' });
 
   const isEmployee = user?.role === 'employee';
@@ -112,6 +113,33 @@ export default function Attendance() {
       await load();
     } catch (err) {
       setError(err.message || 'Clock action failed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function bulkSubmit(event) {
+    event.preventDefault();
+    setError('');
+    setNotice('');
+    setBusy(true);
+    try {
+      const result = await api.post('/attendance/records/bulk/', {
+        department: bulk.department.trim(),
+        date: bulk.date,
+        status: bulk.status,
+      });
+      // Both counts matter: "marked 18" alone would hide the two people whose
+      // existing records were deliberately left alone.
+      setNotice(
+        `Marked ${result.created_count} as ${bulk.status}`
+        + (result.skipped_existing
+          ? ` — ${result.skipped_existing} already had a record and were left alone.`
+          : '.'),
+      );
+      await load();
+    } catch (err) {
+      setError(err.message || 'Bulk mark failed.');
     } finally {
       setBusy(false);
     }
@@ -238,6 +266,61 @@ export default function Attendance() {
           </div>
         </div>
       </section>
+
+      {!isEmployee && (
+        <section className="panel">
+          <div className="panel-head">
+            <div>
+              <h2>Mark a department</h2>
+              <p>
+                Creates records for everyone in a department on one date. Anyone
+                who already has a record is left alone.
+              </p>
+            </div>
+          </div>
+          <form onSubmit={bulkSubmit}>
+            <div className="form-row">
+              <div>
+                <label htmlFor="bulk-department">Department</label>
+                <input
+                  id="bulk-department"
+                  type="text"
+                  value={bulk.department}
+                  placeholder="e.g. Sales"
+                  onChange={e => setBulk({ ...bulk, department: e.target.value })}
+                />
+              </div>
+              <div>
+                <label htmlFor="bulk-date">Date</label>
+                <input
+                  id="bulk-date"
+                  type="date"
+                  value={bulk.date}
+                  onChange={e => setBulk({ ...bulk, date: e.target.value })}
+                  required
+                />
+              </div>
+              <div>
+                <label htmlFor="bulk-status">Status</label>
+                <select
+                  id="bulk-status"
+                  value={bulk.status}
+                  onChange={e => setBulk({ ...bulk, status: e.target.value })}
+                >
+                  {Object.entries(labels).map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-action">
+                <button className="btn" type="submit" disabled={busy || !bulk.department.trim()}>
+                  Mark department
+                </button>
+              </div>
+            </div>
+          </form>
+        </section>
+      )}
 
       {!isEmployee && (
         <section className="panel form-panel" id="attendance-entry">

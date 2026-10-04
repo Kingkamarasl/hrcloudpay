@@ -9,9 +9,11 @@ The interesting cases here are the ones a naive implementation gets wrong:
   destroys real hours silently
 - an employee can only clock themselves
 """
-from datetime import time
+from datetime import datetime, time, timedelta
+from unittest import mock
 
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from attendance.models import Attendance
@@ -20,16 +22,32 @@ from .tests import AttendanceTestCase
 
 CLOCK = '/api/attendance/records/clock/'
 
+# The clock actions read the wall clock, and one of their rules depends on
+# whether "now" is earlier than the check-in. Left to the real clock, a test
+# asserting crossed_midnight is False after a 09:00 check-in passes at 14:00 and
+# fails at 02:00, because clocking out at 02:00 genuinely looks like the next
+# day. Every clock test runs against this fixed instant instead.
+FROZEN_NOW = timezone.make_aware(datetime(2026, 9, 7, 17, 30))
+
+
+def frozen_clock():
+    return mock.patch('attendance.views.timezone.now', return_value=FROZEN_NOW)
+
 
 class ClockInTests(AttendanceTestCase):
     def setUp(self):
         super().setUp()
+        # Derived from the frozen instant rather than the real clock, so the
+        # fixtures and the clock actions agree on what "today" is.
+        self.today = FROZEN_NOW.date()
+        self.today_minus_one = self.today - timedelta(days=1)
         self.authenticate(self.worker)
 
     def clock(self, action, **extra):
         payload = {'action': action}
         payload.update(extra)
-        return self.client.post(CLOCK, payload, format='json')
+        with frozen_clock():
+            return self.client.post(CLOCK, payload, format='json')
 
     def test_an_employee_clocks_themselves_in(self):
         response = self.clock('clock_in')
@@ -105,19 +123,26 @@ class ClockInTests(AttendanceTestCase):
         self.client.force_authenticate(None)
         # 401 or 403 depending on the authentication classes in play; what
         # matters is that it is refused rather than recorded.
-        self.assertIn(self.clock('clock_in').status_code, (401, 403))
+        with frozen_clock():
+            status_code = self.clock('clock_in').status_code
+        self.assertIn(status_code, (401, 403))
         self.assertEqual(Attendance.objects.count(), 0)
 
 
 class ClockOutTests(AttendanceTestCase):
     def setUp(self):
         super().setUp()
+        # Derived from the frozen instant rather than the real clock, so the
+        # fixtures and the clock actions agree on what "today" is.
+        self.today = FROZEN_NOW.date()
+        self.today_minus_one = self.today - timedelta(days=1)
         self.authenticate(self.worker)
 
     def clock(self, action, **extra):
         payload = {'action': action}
         payload.update(extra)
-        return self.client.post(CLOCK, payload, format='json')
+        with frozen_clock():
+            return self.client.post(CLOCK, payload, format='json')
 
     def test_clocking_out_completes_todays_record(self):
         self.record(self.sales, check_in=time(9, 0), date=self.today)

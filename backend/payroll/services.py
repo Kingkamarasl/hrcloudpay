@@ -10,6 +10,8 @@ enters for itself.
 from decimal import Decimal
 from django.utils import timezone
 
+from .absence import absence_deduction
+
 class StatutoryCalculationService:
     """
     Service for calculating employee statutory contributions.
@@ -276,7 +278,19 @@ def calculate_payslip(employee, payroll_config, payroll_run=None):
         })
         advance_plan.append((adv.id, take))
 
-    net_salary = taxable_gross - tax_amount - contribution_total - other_deduction_total - advance_total
+    # Unpaid absence. Opt-in per company and off by default; see
+    # payroll/absence.py for the rules and for everything it declines to deduct.
+    absence_total = Decimal('0')
+    absence_lines = []
+    if getattr(payroll_config, 'deduct_unpaid_absence', False):
+        absence_total, absence_lines = absence_deduction(
+            employee, period_start, period_end,
+        )
+
+    net_salary = (
+        taxable_gross - tax_amount - contribution_total
+        - other_deduction_total - advance_total - absence_total
+    )
 
     # Assembled here, after the tax branch above, because `tax_compliance_gap` is
     # assigned inside it. Building this list earlier silently dropped the tax
@@ -291,7 +305,7 @@ def calculate_payslip(employee, payroll_config, payroll_run=None):
         'gross_salary': taxable_gross,
         'tax_amount': tax_amount,
         'total_contributions': contribution_total,
-        'total_other_deductions': other_deduction_total + advance_total,
+        'total_other_deductions': other_deduction_total + advance_total + absence_total,
         'net_salary': net_salary,
         'breakdown': {
             'currency': payroll_config.currency,
@@ -302,6 +316,7 @@ def calculate_payslip(employee, payroll_config, payroll_run=None):
             'paye': paye_result,
             'compliance_gaps': compliance_gaps,
             'other_deductions': deduction_lines,
+            'unpaid_absence': absence_lines,
             'advance_recoveries': advance_lines,
             '_advance_plan': advance_plan,
             '_overtime_entry_ids': ot_ids,

@@ -26,6 +26,14 @@ class PayrollConfig(models.Model):
     # Tax is applied progressively across brackets (see payroll/services.py)
     tax_calculation_enabled = models.BooleanField(default=True)
 
+    # Off by default on purpose. Whether an unpaid absence may be deducted from
+    # a monthly salary is a wage-law question that varies by country and
+    # sometimes by sector, and getting it wrong takes money out of an
+    # employee's pay on the strength of a manager's attendance mark. Companies
+    # turn it on once they have confirmed their position; see payroll/absence.py
+    # for the rules and, more importantly, for everything it declines to deduct.
+    deduct_unpaid_absence = models.BooleanField(default=False)
+
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):

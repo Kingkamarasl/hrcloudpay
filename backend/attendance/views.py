@@ -1,3 +1,6 @@
+from datetime import date as date_cls
+
+from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
@@ -9,7 +12,7 @@ from rest_framework.views import APIView
 from accounts.permissions import CanManageHROrDepartment, IsCompanyActive, IsCompanyMember
 from accounts.audit import audit, changed_fields, snapshot_fields
 
-from .models import Attendance
+from .models import STATUS_CHOICES, Attendance
 from .serializers import AttendanceSerializer
 
 TRACKED = ['date', 'check_in', 'check_out', 'crossed_midnight', 'status', 'notes']
@@ -94,6 +97,128 @@ class AttendanceViewSet(viewsets.ModelViewSet):
             request=self.request,
         )
         instance.delete()
+
+
+class BulkMarkView(APIView):
+    """Mark a date for many employees in one call.
+
+    Marking a whole department present is the everyday clerical case: twenty-odd
+    rows that would otherwise be twenty-odd form submissions.
+
+    Three decisions:
+
+    **Existing records are skipped, never overwritten.** Someone who clocked in
+    at 08:58 has real hours in that row. A bulk mark that flipped them to
+    `absent` would destroy the clock times and leave an attendance trail that
+    says they never arrived. The response says how many were skipped so the
+    mismatch is visible rather than inferred.
+
+    **Out-of-scope employees reject the whole batch.** Taking 19 of 20 and
+    failing on the 20th is worse than doing nothing: the caller cannot tell
+    which half took effect. This is all-or-nothing inside a transaction.
+
+    **One audit row for the batch, naming the ids.** Twenty individual rows
+    would bury the action; one row that cannot say who it touched would be
+    useless. It does both.
+    """
+
+    permission_classes = [IsCompanyMember, IsCompanyActive]
+
+    def post(self, request):
+        from employees.models import Employee
+
+        user = request.user
+        # Batch marking is an HR action. An employee could already write their
+        # own record through the viewset, so allowing it here adds no reach -
+        # but it would let anyone mark a batch of one, which is a confusing way
+        # to do something the clock action already does properly.
+        if user.role == 'employee':
+            raise PermissionDenied(
+                'Only HR, an owner, or a department manager can mark attendance '
+                'in bulk. Employees can clock in for themselves.')
+        payload = request.data
+        try:
+            day = date_cls.fromisoformat(str(payload.get('date', '')))
+        except ValueError:
+            raise ValidationError({'date': 'Required as YYYY-MM-DD.'})
+        status = payload.get('status')
+        if status not in dict(STATUS_CHOICES):
+            raise ValidationError({
+                'status': f'Must be one of: {", ".join(dict(STATUS_CHOICES))}.',
+            })
+
+        ids = payload.get('employee_ids') or []
+        department = payload.get('department')
+        if not ids and not department:
+            raise ValidationError({
+                'detail': 'Give employee_ids, a department, or both.',
+            })
+
+        employees = Employee.objects.filter(company=user.company)
+        if ids:
+            employees = employees.filter(id__in=ids)
+            if employees.count() != len(set(ids)):
+                # Either an unknown id or one belonging to another tenant. Both
+                # are refused the same way, so this is not a probe for which
+                # employee ids exist elsewhere.
+                raise ValidationError({
+                    'employee_ids': 'One or more employees are not in your company.',
+                })
+        if department:
+            employees = employees.filter(department=department)
+
+        employees = list(employees.order_by('id'))
+        if not employees:
+            return Response({'created': [], 'created_count': 0,
+                             'skipped_existing': 0, 'skipped_existing_ids': []})
+
+        # All-or-nothing: 19 of 20 applied with the 20th refused leaves the
+        # caller unable to tell which half took effect.
+        rule = CanManageHROrDepartment()
+        if not all(rule.employee_in_scope(request, e) for e in employees):
+            raise PermissionDenied('You cannot record attendance for all of these employees.')
+
+        existing = set(
+            Attendance.objects.filter(
+                employee__in=employees, date=day,
+            ).values_list('employee_id', flat=True)
+        )
+
+        created, skipped = [], []
+        with transaction.atomic():
+            for employee in employees:
+                if employee.id in existing:
+                    skipped.append(employee.id)
+                    continue
+                record = Attendance.objects.create(
+                    employee=employee, date=day, status=status,
+                    notes=f'Bulk marked as {status}',
+                )
+                created.append(record)
+
+        if created:
+            audit(
+                request.user, 'create',
+                f'Bulk marked {len(created)} employees as {status} for {day}',
+                user.company, 'attendance', '',
+                {
+                    'date': str(day),
+                    'status': status,
+                    'department': department or '',
+                    'created_ids': [r.id for r in created],
+                    'employee_ids': [r.employee_id for r in created],
+                    'skipped_existing_ids': skipped,
+                },
+                request=request,
+            )
+
+        return Response({
+            'created': [{'id': r.id, 'employee_id': r.employee_id,
+                         'employee': r.employee.full_name} for r in created],
+            'created_count': len(created),
+            'skipped_existing': len(skipped),
+            'skipped_existing_ids': skipped,
+        }, status=201)
 
 
 class ClockView(APIView):
