@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Install Docker Engine and Compose v2 on a fresh Ubuntu server.
 #
-# For Alibaba Cloud ECS, run this over SSH as the non-root user before the
+# For any cloud VPS, run this over SSH before the first deploy:
+#
+# Tested on Ubuntu 24.04 (Spaceship, OCI, Alibaba ECS and most others ship
+# this or 22.04). The OS check below refuses anything it cannot handle rather
+# than half-working.
 # first `bash deploy/deploy.sh`:
 #
 #     bash deploy/bootstrap-docker.sh
@@ -33,8 +37,8 @@ case "${ID:-}" in
     ;;
   *)
     fail "This script targets Ubuntu or Debian. You have '${ID:-unknown}'.
-  On Alibaba Cloud Linux the package names differ - choose the Ubuntu image
-  when creating the instance and this problem does not exist."
+  Alibaba Cloud Linux, CentOS and Rocky all name their packages differently -
+  choose the Ubuntu image and this problem does not exist."
     ;;
 esac
 
@@ -135,8 +139,9 @@ Two things the script cannot do for you, and both matter:
     validates over plain HTTP, so a domain that does not resolve yet means a
     failed issuance that has to be retried.
 
-  * Open ports 80 and 443 in the Alibaba Cloud *security group*, and restrict
-    port 22 to your own IP. The security group is a separate layer from anything
-    on the server itself - a closed security group looks exactly like a broken
-    application.
+  * Open ports 80 and 443 in whatever firewall your host has - a provider
+    security group, a control-panel firewall and the OS's own are three
+    separate layers and all must allow it. Restrict port 22 to your own IP. A
+    closed firewall looks exactly like a broken application: the connection is
+    simply refused, with nothing in any log to say why.
 NEXT

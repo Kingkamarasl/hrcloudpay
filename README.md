@@ -350,10 +350,14 @@ so the person registers and logs in successfully - and then `IsCompanyActive`
 refuses every core HR and payroll route with *"Your company account is not yet
 activated."*
 
-The public registration path **does not send an activation email**. Only the
-platform path does (`accounts/platform.py`), which needs a platform superuser.
-On a database with no superuser, the first company is therefore stuck: usable
-login, no access to anything, and no email explaining why.
+The public registration path **does** send an activation email
+(`RegisterView.post`, `accounts/views.py`) - but with `fail_silently=True`, so
+a mail failure is invisible. With the console backend it appears in the logs; on
+a server with no SMTP configured it goes nowhere at all and registration still
+returns 201 with "check your email to activate your account". Configure
+`EMAIL_BACKEND`, or set it from Platform Admin -> Email / SMTP, or every
+self-service signup produces a company that can never be activated and no error
+anywhere says why.
 
 Bootstrap a platform superuser and activate it:
 
