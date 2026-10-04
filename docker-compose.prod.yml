@@ -45,8 +45,13 @@ services:
       EMAIL_PORT: ${EMAIL_PORT:-587}
       EMAIL_HOST_USER: ${EMAIL_HOST_USER:-}
       EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD:-}
-      EMAIL_USE_TLS: ${EMAIL_USE_TLS:-True}
       DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-no-reply@hrcloudpay.com}
+      # The dashboard connection card (ISP / location / IP). Blank falls back to
+      # the built-in free provider. It has to be declared here as well as in
+      # .env: Compose only forwards variables that appear in this block, so a
+      # value present in .env but absent below never reaches the container and the
+      # card silently keeps using the default provider.
+      IP_GEOLOCATION_URL: ${IP_GEOLOCATION_URL:-}
     depends_on:
       db:
         condition: service_healthy
