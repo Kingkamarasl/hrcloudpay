@@ -83,6 +83,13 @@ input, select {
 .alert-success { background: #dcfce7; color: var(--success); }
 .alert-warning { background: #fef3c7; color: var(--warning); }
 
+/* Per-row reasons from the bulk employee import. This class was already used by
+   Employees.jsx with no rule anywhere in the stylesheet, so the one part of the
+   report that explains the failure rendered unstyled inside the alert. */
+.import-failures { margin: 0.55rem 0 0; padding-left: 1.15rem; font-size: 0.85rem; }
+.import-failures li { margin-bottom: 0.35rem; line-height: 1.45; }
+.import-failures strong { font-size: 0.82rem; }
+
 /* App shell */
 .app-shell { display: flex; min-height: 100vh; }
 .sidebar {

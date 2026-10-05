@@ -8,6 +8,25 @@ const categories=[{v:'casual',l:'Casual (CA-####)'},{v:'short_time',l:'Short tim
 const statuses=['active','on_leave','suspended','terminated','resigned'];
 const nice=s=>(s||'').replaceAll('_',' ').replace(/\b\w/g,c=>c.toUpperCase());
 
+// One failed row, as a sentence a person can act on.
+//
+// The server reports a rejected row in one of two shapes: `error` is a plain
+// sentence (a missing field, an unknown department), while `errors` is the
+// serializer's own dict of field -> messages. The previous renderer did
+// JSON.stringify on whichever it found, so a field error came back as
+// {"employment_status":["\"Active\" is not a valid choice."]} and every
+// row's detail was welded into one comma-joined line.
+function describeFailure(f){
+  if(f.error) return f.error;
+  if(f.errors&&typeof f.errors==='object'){
+    return Object.entries(f.errors).map(([field,val])=>{
+      const msgs=Array.isArray(val)?val:[val];
+      return `${nice(field)}: ${msgs.join(' ')}`;
+    }).join('; ');
+  }
+  return 'Could not be read.';
+}
+
 export default function Employees(){
   const[employees,setEmployees]=useState([]),[departments,setDepartments]=useState([]),[loading,setLoading]=useState(true),[showForm,setShowForm]=useState(false),[form,setForm]=useState(emptyForm),[error,setError]=useState(''),[query,setQuery]=useState(''),[status,setStatus]=useState(''),[department,setDepartment]=useState(''),[showImport,setShowImport]=useState(false),[importLoading,setImportLoading]=useState(false),[importResult,setImportResult]=useState(null),[importFile,setImportFile]=useState(null);
   function load(){setLoading(true);setError('');Promise.all([api.get('/employees/employees/'),api.get('/employees/departments/')]).then(([e,d])=>{setEmployees(e.results??e);setDepartments(d.results??d)}).catch(e=>setError(e.message||'Unable to load employee directory.')).finally(()=>setLoading(false));}
@@ -27,7 +46,17 @@ export default function Employees(){
       const res = await api.post('/employees/employees/import-csv/', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
       setImportResult({ success: true, data: res });
     } catch (err) {
-      setImportResult({ success: false, error: err.message || 'Import failed' });
+      // The server answers 400 when no row could be applied, which is a
+      // legitimate outcome for a readable file with bad values - not a
+      // transport failure. The per-row report is on err.data, and dropping it
+      // left the wizard reporting a failure with no reason attached. err.message
+      // is the client's flattened summary of the whole body, which renders the
+      // failures array as a run of [object Object].
+      setImportResult({
+        success: false,
+        error: err.message || 'Import failed',
+        data: err.data || null,
+      });
     } finally {
       setImportLoading(false);
       load();
@@ -63,12 +92,40 @@ export default function Employees(){
         <div className="migration-note"><Icon name="info" size={15}/><span>Required columns: first_name, last_name, email, base_salary. Other fields are optional.</span></div>
         <button className="btn btn-primary compact" type="submit" disabled={importLoading}>{importLoading?'Importing...':'Start Migration'}</button>
       </form>
-      {importResult && (
-        <div className={`alert ${importResult.success ? 'alert-success' : 'alert-error'}`}>
-          {importResult.success ? `Successfully imported ${importResult.data.imported} employees.` : importResult.error}
-          {importResult.data?.failures?.length > 0 && <div className="import-failures">Failed rows: {importResult.data.failures.map(f=>`Row ${f.row}: ${JSON.stringify(f.errors||f.error)}`).join(', ')}</div>}
-        </div>
-      )}
+      {importResult && (() => {
+        const report = importResult.data || {};
+        const failed = report.failures || [];
+        const created = report.created ?? 0;
+        const updated = report.updated ?? 0;
+        const nothingApplied = !created && !updated;
+        // Nothing applied is a failure; some rows applied is a warning, because
+        // saying 'successfully imported 0 employees' in a green box is a lie
+        // about a workforce that did not grow.
+        const tone = nothingApplied ? 'alert-error' : (failed.length ? 'alert-warning' : 'alert-success');
+        const plural = n => `${n} row${n===1?'':'s'}`;
+        const summary = report.detail
+          || (nothingApplied
+              ? `No employees were imported. ${plural(failed.length)} could not be read.`
+              : `${created} created, ${updated} updated${failed.length ? `, ${plural(failed.length)} failed` : ''}.`);
+        return (
+          <div className={`alert ${tone}`}>
+            <div>{summary}</div>
+            {failed.length > 0 && (
+              <ul className="import-failures">
+                {failed.map(f => <li key={f.row}><strong>Row {f.row}</strong> &mdash; {describeFailure(f)}</li>)}
+              </ul>
+            )}
+            {report.notes?.length > 0 && (
+              <ul className="import-failures">
+                {report.notes.map(n => <li key={n}>{n}</li>)}
+              </ul>
+            )}
+            {report.ignored_columns?.length > 0 && (
+              <div className="import-failures">Columns not recognised, so their values were skipped: {report.ignored_columns.join(', ')}</div>
+            )}
+          </div>
+        );
+      })()}
     </div>}
     <div className="panel table-panel"><div className="panel-head"><div><div className="eyebrow">WORKFORCE DIRECTORY</div><h2>Employee directory <span className="count-pill">{filtered.length}</span></h2><p>Search by employee, ID, department, job title or email.</p></div><div className="table-tools"><div className="search-input"><Icon name="search" size={16}/><input placeholder="Search employees..." value={query} onChange={e=>setQuery(e.target.value)}/></div><select value={department} onChange={e=>setDepartment(e.target.value)}><option value="">All departments</option>{departments.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select><select value={status} onChange={e=>setStatus(e.target.value)}><option value="">All statuses</option>{statuses.map(s=><option key={s} value={s}>{nice(s)}</option>)}</select></div></div>
       {loading?<div className="page-loading">Loading employee directory…</div>:<div className="table-wrap"><table className="data-table modern-table"><thead><tr><th>Employee</th><th>ID / contact</th><th>Department</th><th>Role</th><th>Contract</th><th>Status</th><th>HR records</th></tr></thead><tbody>{filtered.map(e=><tr key={e.id}><td><div className="person-cell"><div className="avatar">{e.profile_photo_url ? <img src={e.profile_photo_url} alt="" /> : (e.full_name||'E').slice(0,2).toUpperCase()}</div><div><Link to={`/employees/${e.id}`} className="table-person-link"><strong>{e.full_name}</strong></Link><small>{e.employee_code}{e.employment_category ? ` · ${nice(e.employment_category)}` : ''}</small></div></div></td><td><strong>{e.id_card_no||'—'}</strong><small className="table-subline">{e.email||e.phone||'No contact'}</small></td><td>{e.effective_department||e.department||'Unassigned'}</td><td>{e.job_title||'—'}</td><td><span className={`mini-status ${e.contract_status||'none'}`}>{nice(e.contract_status||'none')}</span>{e.contract_end_date&&<small className="table-subline">Ends {e.contract_end_date}</small>}</td><td><span className={`status-dot status-${e.employment_status}`}><i/>{nice(e.employment_status)}</span></td><td><div className="hr-record-counts"><span>{e.emergency_contact_count||0} contact</span><span>{e.employment_event_count||0} events</span></div></td></tr>)}{!filtered.length&&<tr><td colSpan="7" className="empty-row">No employees match your filters.</td></tr>}</tbody></table></div>}

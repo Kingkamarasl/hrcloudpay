@@ -165,12 +165,23 @@ class FilingCalendarCopyTests(SimpleTestCase):
         return path.read_text(encoding='utf-8', errors='replace')
 
     def _bundle(self):
-        """The built bundle, or None when this checkout has not built one."""
+        """Every built JS chunk, or None when this checkout has not built one.
+
+        Reading only the first file alphabetically checks whichever route Vite
+        happened to emit first. Vite code-splits by route, so `calendar_status`
+        lives in the StatutoryCompliance chunk and appears in no other, which made
+        this fail on a correct freshly-built bundle - the exact opposite of what a
+        stale-build guard is for. It only ever ran at all when someone built the
+        frontend locally, so it had been quietly wrong rather than quietly red.
+        """
         import pathlib
         dist = pathlib.Path(__file__).resolve().parents[2] / 'frontend_dist'
-        for path in sorted(dist.glob('assets/*.js')):
-            return path.read_text(encoding='utf-8', errors='replace')
-        return None
+        chunks = sorted(dist.glob('assets/*.js'))
+        if not chunks:
+            return None
+        return '\n'.join(
+            path.read_text(encoding='utf-8', errors='replace') for path in chunks
+        )
 
     def test_the_unactionable_advice_is_gone(self):
         source = self._source()

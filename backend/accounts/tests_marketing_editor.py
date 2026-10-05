@@ -71,18 +71,62 @@ def editor_source():
     return EDITOR.read_text(encoding='utf-8')
 
 
+def _node_type_flags():
+    """The flags this node needs to run a `.ts` file, or None if it cannot.
+
+    The helpers these tests exercise are lifted verbatim out of
+    MarketingEditor.tsx, so the harness carries TypeScript annotations and node
+    has to erase them before running it. Node 22.6 does that behind
+    `--experimental-strip-types`; node 23.6 and later do it by default; older
+    versions cannot do it at all.
+
+    Probed with the smallest script that still fails to parse without erasure,
+    rather than assumed from a version string. A harness that cannot run for lack
+    of a runtime capability is indistinguishable from a harness reporting a real
+    failure, and that ambiguity is exactly what these tests exist to catch.
+    """
+    probe = 'const x: number = 1;\nconsole.log(x);\n'
+    with tempfile.TemporaryDirectory() as folder:
+        path = pathlib.Path(folder) / 'probe.ts'
+        path.write_text(probe, encoding='utf-8')
+        for flags in ([], ['--experimental-strip-types']):
+            result = subprocess.run(
+                ['node', *flags, str(path)], capture_output=True, text=True,
+                timeout=60,
+            )
+            if result.returncode == 0:
+                return flags
+    return None
+
+
+_NODE_TYPE_FLAGS = _node_type_flags()
+
+
 def run_node(script, *args):
-    """Run a JavaScript file under node and parse its stdout as JSON.
+    """Run a TypeScript file under node and parse its stdout as JSON.
 
     Written to a file rather than passed to `node -e`: an inline script this
     size gets mangled by Windows argument quoting, and a harness that fails for
     quoting reasons looks exactly like a harness reporting a real failure.
+
+    Named `.ts` because the script is lifted from the editor source. It used to
+    be written as `.js`, so node met `repeated: RepeatedSpec` and answered
+    `SyntaxError: Unexpected token ':'` - a parse error in the harness, reported
+    as a failure of the component's own helpers.
     """
+    if _NODE_TYPE_FLAGS is None:
+        raise unittest.SkipTest(
+            'This node cannot erase TypeScript annotations, so the helpers '
+            'lifted from MarketingEditor.tsx cannot be run. Needs node 22.6 or '
+            'later; Vite itself only wants 18, so an older checkout is plausible '
+            'rather than a broken machine.'
+        )
     with tempfile.TemporaryDirectory() as folder:
-        path = pathlib.Path(folder) / 'harness.js'
+        path = pathlib.Path(folder) / 'harness.ts'
         path.write_text(script, encoding='utf-8')
         result = subprocess.run(
-            ['node', str(path), *args], capture_output=True, text=True, timeout=60,
+            ['node', *_NODE_TYPE_FLAGS, str(path), *args],
+            capture_output=True, text=True, timeout=60,
         )
     if result.returncode != 0:
         raise AssertionError(f'node exited {result.returncode}: {result.stderr.strip()}')
