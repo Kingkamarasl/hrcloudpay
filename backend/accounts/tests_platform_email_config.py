@@ -16,6 +16,7 @@ Two properties are worth more than the feature itself:
 from unittest.mock import patch
 
 from django.core import mail
+from django.core.mail.backends.base import BaseEmailBackend
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
@@ -27,6 +28,18 @@ TEST_URL = '/api/auth/platform/email-config/test/'
 
 PASSWORD = 'StrongPassword123!'
 SMTP_PASSWORD = 'smtp-secret-value-9182'
+
+
+class _RefusingBackend(BaseEmailBackend):
+    """A backend that cannot deliver, so the screen must report it.
+
+    Stands in for the misconfigured EMAIL_BACKEND that made this whole
+    episode invisible: the stored EmailConfig was perfect throughout, and
+    every real send still failed.
+    """
+
+    def send_messages(self, email_messages):
+        raise OSError('SMTP AUTH failed: bad credentials')
 
 
 class EmailConfigTestBase(TestCase):
@@ -423,8 +436,10 @@ class TestSendTests(EmailConfigTestBase):
     def test_a_successful_send_is_audited(self):
         self.save_config()
 
-        with patch('hrcloudpay.email_backend.PlatformEmailBackend.send_messages',
-                   return_value=1):
+        with override_settings(
+                EMAIL_BACKEND='hrcloudpay.email_backend.PlatformEmailBackend'
+        ), patch('hrcloudpay.email_backend.PlatformEmailBackend.send_messages',
+                 return_value=1):
             response = self.client.post(
                 TEST_URL, {'to': 'ops@example.com'}, format='json')
 
@@ -436,12 +451,62 @@ class TestSendTests(EmailConfigTestBase):
         self.assertTrue(row.metadata['success'])
         self.assertNotIn(SMTP_PASSWORD, str(row.metadata))
 
+    def test_the_screen_exercises_the_backend_activation_mail_uses(self):
+        """The property whose absence let a broken deployment pass here.
+
+        This screen used to build PlatformEmailBackend directly, so it
+        proved the stored credentials worked and said nothing about whether
+        the application's own mail path worked. A deployment where every
+        activation send was refused by localhost:25 still showed green here,
+        which is precisely how the misconfiguration survived so long.
+
+        The screen now sends through settings.EMAIL_BACKEND, so a broken
+        backend fails this screen instead of hiding behind a valid config.
+        """
+        self.save_config()
+
+        with override_settings(
+                EMAIL_BACKEND=(
+                    'accounts.tests_platform_email_config._RefusingBackend')
+        ):
+            response = self.client.post(
+                TEST_URL, {'to': 'ops@example.com'}, format='json')
+
+        self.assertEqual(response.status_code, 503, response.data)
+
+    def test_the_screen_sends_from_the_configured_address(self):
+        """The sender comes from EmailConfig, not the site-wide default.
+
+        The view passes DEFAULT_FROM_EMAIL and lets the backend substitute the
+        configured sender, which is the same substitution activation mail
+        relies on. Pinned here so the two cannot drift apart.
+        """
+        self.save_config(from_email='mail@hrcloudpay.com')
+
+        captured = {}
+
+        def capture(self, messages):
+            captured['from'] = [message.from_email for message in messages]
+            return len(messages)
+
+        with override_settings(
+                EMAIL_BACKEND='hrcloudpay.email_backend.PlatformEmailBackend'
+        ), patch('django.core.mail.backends.smtp.EmailBackend.send_messages',
+                 new=capture):
+            response = self.client.post(
+                TEST_URL, {'to': 'ops@example.com'}, format='json')
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(captured['from'], ['mail@hrcloudpay.com'])
+
     def test_a_failed_send_is_audited_and_reported(self):
         """A wrong password must surface here, not when a customer waits."""
         self.save_config()
 
-        with patch('hrcloudpay.email_backend.PlatformEmailBackend.send_messages',
-                   side_effect=OSError('SMTP AUTH failed: bad credentials')):
+        with override_settings(
+                EMAIL_BACKEND=(
+                    'accounts.tests_platform_email_config._RefusingBackend')
+        ):
             response = self.client.post(
                 TEST_URL, {'to': 'ops@example.com'}, format='json')
 

@@ -1,5 +1,5 @@
 from django.conf import settings
-from django.core.mail import send_mail
+from hrcloudpay.email_backend import send_mail_logging_failure
 from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -34,7 +34,7 @@ class RegisterView(APIView):
         activation_link = (
             f"{settings.FRONTEND_URL}/activate/{company.id}/{company.activation_token}"
         )
-        send_mail(
+        send_mail_logging_failure(
             subject='Activate your HRCLOUDPAY account',
             message=(
                 f"Welcome to HRCLOUDPAY, {company.name}!\n\n"
@@ -42,7 +42,7 @@ class RegisterView(APIView):
             ),
             from_email=settings.DEFAULT_FROM_EMAIL,
             recipient_list=[company.email],
-            fail_silently=True,
+            what='company activation',
         )
 
         return Response(

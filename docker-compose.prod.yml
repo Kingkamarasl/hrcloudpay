@@ -53,11 +53,21 @@ services:
       AWS_S3_REGION_NAME: ${AWS_S3_REGION_NAME:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      EMAIL_BACKEND: ${EMAIL_BACKEND:-django.core.mail.backends.console.EmailBackend}
-      EMAIL_HOST: ${EMAIL_HOST:-}
-      EMAIL_PORT: ${EMAIL_PORT:-587}
-      EMAIL_HOST_USER: ${EMAIL_HOST_USER:-}
-      EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD:-}
+      # PlatformEmailBackend takes host, port, credentials and sender from
+      # the EmailConfig row a platform admin saves - not from this file.
+      #
+      # The default used to be the console backend, and settings.py lets an
+      # explicit EMAIL_BACKEND win, so that default silently overrode the
+      # database-driven backend. The feature was unreachable in production:
+      # activation mail went to stdout nobody reads. The EMAIL_HOST and
+      # EMAIL_PORT lines below it were worse than useless - settings.py does
+      # not read those names at all, so setting them correctly still produced
+      # localhost:25, which is how a deployment ended up refusing its own
+      # connections with nothing in any log to say why.
+      #
+      # With no usable EmailConfig the backend falls back to console itself, so
+      # losing the configuration still shows the mail rather than raising.
+      EMAIL_BACKEND: ${EMAIL_BACKEND:-hrcloudpay.email_backend.PlatformEmailBackend}
       DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-no-reply@hrcloudpay.com}
       # The dashboard connection card (ISP / location / IP). Blank falls back to
       # the built-in free provider. It has to be declared here as well as in

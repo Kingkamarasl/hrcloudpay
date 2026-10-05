@@ -205,7 +205,7 @@ Before going live:
   deploy destroys every uploaded file** — employee documents, contracts,
   payslip attachments, knowledge-base sources. With the bucket set, uploads go
   to private S3 and versioning/replication become the provider's problem
-- Configure a real `EMAIL_BACKEND` (e.g. SendGrid, Mailgun, SES) for activation emails
+- Set the SMTP details at Platform Admin -> Email / SMTP for activation emails
 - Set `DEBUG=False`, a real `SECRET_KEY`, and proper `ALLOWED_HOSTS`
 - Run `npm run build` (frontend) then `python manage.py collectstatic --noinput`
   (backend) and deploy the single Django app — WhiteNoise (already wired in)
@@ -287,7 +287,10 @@ AWS_STORAGE_BUCKET_NAME=<bucket>
 AWS_S3_REGION_NAME=<region>
 AWS_ACCESS_KEY_ID=<key>
 AWS_SECRET_ACCESS_KEY=<secret>
-EMAIL_BACKEND=<smtp backend>
+# Outbound email is NOT configured here. Leave EMAIL_BACKEND unset and
+# set the SMTP details at Platform Admin -> PLATFORM -> Email / SMTP. There
+# are deliberately no EMAIL_HOST / EMAIL_PORT / EMAIL_USE_TLS variables -
+# this project does not read them, so setting them changes nothing.
 CORS_ALLOWED_ORIGINS=
 ```
 
@@ -371,9 +374,20 @@ A superuser's `company` must be null - the platform's own endpoints reject a
 superuser attached to a tenant, and `admin` in a seeded dev database is a
 frequent source of confusing 403s for the same reason.
 
-Configure `EMAIL_BACKEND` before you need it. It defaults to the console backend,
-which on a container writes to stdout that nobody reads: activation, password
-reset and invitation mail all disappear silently, with no failure logged.
+**Do not set `EMAIL_BACKEND`.** It defaults to
+`hrcloudpay.email_backend.PlatformEmailBackend`, which reads the SMTP host,
+port, credentials and sender from the `EmailConfig` row saved at Platform
+Admin -> PLATFORM -> Email / SMTP. Setting `EMAIL_BACKEND` yourself replaces
+that with a backend which reads settings this project does not define, so it
+connects to `localhost:25` and every message is refused. There are no
+`EMAIL_HOST` / `EMAIL_PORT` / `EMAIL_USE_TLS` variables here because nothing
+reads them; an operator who sets all of them correctly still gets refused
+connections.
+
+With no saved configuration the backend falls back to the console, which on a
+container writes to stdout that nobody reads. Failures are logged at ERROR
+rather than swallowed, so check `docker compose logs backend` before assuming
+a signup went out.
 
 #### Health checks
 

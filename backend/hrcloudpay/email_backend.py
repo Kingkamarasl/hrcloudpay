@@ -18,10 +18,15 @@ Two deliberate behaviours:
 Django's test runner replaces `EMAIL_BACKEND` with locmem before any test runs,
 so none of this is on the path for the suite.
 """
+import logging
+
 from django.conf import settings
+from django.core.mail import send_mail
 from django.core.mail.backends.base import BaseEmailBackend
 from django.core.mail.backends.console import EmailBackend as ConsoleBackend
 from django.core.mail.backends.smtp import EmailBackend as SMTPEmailBackend
+
+logger = logging.getLogger(__name__)
 
 
 class PlatformEmailBackend(BaseEmailBackend):
@@ -70,3 +75,48 @@ class PlatformEmailBackend(BaseEmailBackend):
         if config is None or not config.usable:
             return None
         return config
+
+
+def send_mail_logging_failure(
+    subject, message, from_email, recipient_list, what='message', **kwargs,
+):
+    """Send one message, recording the cause when it cannot be delivered.
+
+    Django's ``fail_silently=True`` returns 0 and raises nothing. A refused
+    port, an unroutable host, a rejected sender and a wrong password all
+    produce no exception, no log line and no trace anywhere - the message is
+    gone, while the caller reports success to the person waiting for it.
+
+    That is not hypothetical. A deployment that named Django's stock SMTP
+    backend without ever configuring EMAIL_HOST reached localhost:25, so every
+    activation mail failed on every signup. Registration still returned 201 and
+    told the user to check their email, while the platform's own test-send
+    screen passed throughout, because it bypassed the broken path on purpose.
+
+    The failure is still not raised. A signup must not return 500 because the
+    mail server is down, and the account itself was created successfully either
+    way. But it is logged at ERROR with the exception attached, so the cause is
+    recoverable from the logs instead of from a customer.
+
+    Returns the count of accepted messages - 0 on failure, the same value
+    ``fail_silently=True`` returns, so callers need no change.
+    """
+    try:
+        return send_mail(
+            subject=subject,
+            message=message,
+            from_email=from_email,
+            recipient_list=recipient_list,
+            # Always False: the point is to catch the exception in order to
+            # record it. fail_silently here would reintroduce the silence.
+            fail_silently=False,
+            **kwargs,
+        )
+    except Exception:
+        logger.exception(
+            'Could not send %s email to %s. It was not delivered and the '
+            'recipient will not be told. Check the EmailConfig sender, then '
+            'use Platform Admin -> Email / SMTP to send a test.',
+            what, ', '.join(str(address) for address in recipient_list),
+        )
+        return 0

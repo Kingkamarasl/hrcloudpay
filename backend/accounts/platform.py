@@ -1,5 +1,5 @@
 from django.conf import settings
-from django.core.mail import send_mail
+from hrcloudpay.email_backend import send_mail_logging_failure
 from django.db import transaction
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
@@ -148,7 +148,7 @@ class PlatformCompanyResendActivationView(APIView):
         if company.is_active: return Response({'detail':'Company is already active.'},status=400)
         company.activation_token=uuid.uuid4(); company.save(update_fields=['activation_token','updated_at'])
         activation_url=f"{settings.FRONTEND_URL}/activate/{company.id}/{company.activation_token}"
-        send_mail('Activate your HRCloudPay company account',f'Activate your HRCloudPay account here:\n\n{activation_url}',settings.DEFAULT_FROM_EMAIL,[company.email],fail_silently=True)
+        send_mail_logging_failure('Activate your HRCloudPay company account',f'Activate your HRCloudPay account here:\n\n{activation_url}',settings.DEFAULT_FROM_EMAIL,[company.email],what='platform company activation')
         audit(request.user,'system',f"Regenerated activation for {company.name}",company,'company',company.id)
         return Response({'message':'A new activation link has been generated and emailed.','activation_url':activation_url})
 
@@ -1403,22 +1403,6 @@ class PlatformAITestView(APIView):
             return Response({'success': False, 'detail': str(exc)}, status=503)
 
 
-def _test_message(subject, body, config, recipient):
-    """Build the test EmailMessage.
-
-    Kept out of the view so the view reads as request handling rather than MIME
-    assembly, and so a future change to the test message is one edit away from
-    the code that sends it.
-    """
-    from django.core.mail import EmailMultiAlternatives
-
-    message = EmailMultiAlternatives(
-        subject, body, config.from_email or settings.DEFAULT_FROM_EMAIL, [recipient],
-    )
-    message.attach_alternative(body, 'text/plain')
-    return message
-
-
 class PlatformEmailConfigView(APIView):
     """Read or update the site-wide SMTP settings.
 
@@ -1592,6 +1576,8 @@ class PlatformEmailTestView(APIView):
     permission_classes = [IsPlatformSecretsAdmin]
 
     def post(self, request):
+        # send_mail, not send_mail_logging_failure: this screen exists precisely to
+        # surface the exception, so it must not swallow one.
         from django.core.mail import send_mail
 
         from .platform_models import EmailConfig
@@ -1616,13 +1602,20 @@ class PlatformEmailTestView(APIView):
             'If you are reading it, the configuration works.\n'
         )
 
-        from hrcloudpay.email_backend import PlatformEmailBackend
-
-        backend = PlatformEmailBackend(fail_silently=False)
+        # Deliberately routed through send_mail, and therefore through
+        # settings.EMAIL_BACKEND, which is the exact path an activation mail
+        # takes. Constructing PlatformEmailBackend directly - as this used to -
+        # proved the stored credentials worked and nothing more, so the test
+        # went green on a deployment where every real send failed. A green
+        # result here now means the application's own mail path works.
         try:
-            sent = backend.send_messages([
-                _test_message(subject, body, config, recipient),
-            ])
+            sent = send_mail(
+                subject=subject,
+                message=body,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[recipient],
+                fail_silently=False,
+            )
         except Exception as exc:
             audit(
                 request.user, 'platform_email_test',
