@@ -203,8 +203,8 @@ export default function PlatformAdmin(){
   const filteredCompanies=useMemo(()=>{const q=search.toLowerCase().trim();return q?companies.filter(c=>`${c.name} ${c.email} ${c.country||''} ${c.owner_name||''}`.toLowerCase().includes(q)):companies},[companies,search]);
   const filteredUsers=useMemo(()=>{const q=search.toLowerCase().trim();return q?users.filter(u=>`${u.username} ${u.email} ${u.company_name||''} ${u.role}`.toLowerCase().includes(q)):users},[users,search]);
   const navGroups=[
-    ['COMMAND CENTER',[['overview','Overview','grid'],['content','Marketing content','file']]],
-    ['TENANT OPERATIONS',[['companies','Companies','building'],['subscriptions','Billing','wallet'],['usage','Usage','trend'],['onboarding','Onboarding','calendar']]],
+    ['COMMAND CENTER',[['overview','Overview','grid'],['content','Marketing content','file'],['seo','Search (SEO)','search']]],
+    ['TENANT OPERATIONS',[['companies','Companies','building'],['subscriptions','Billing','wallet'],['plans','Plans','file'],['usage','Usage','trend'],['onboarding','Onboarding','calendar']]],
     ['CUSTOMER SUCCESS',[['support','Support','file'],['notifications','Communications','bell']]],
     ['GOVERNANCE',[['users','Users','users'],['branding','Site icon','grid'],['audit','Audit & security','file'],['security','Security center','shield'],['analytics','Analytics','trend']]],
     ['OPERATIONS',[['payments','Transactions','wallet'],['support','Support','file'],['health','System health','activity'],['flags','Feature flags','settings']]],
