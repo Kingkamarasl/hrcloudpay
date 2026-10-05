@@ -148,9 +148,27 @@ class PlatformCompanyResendActivationView(APIView):
         if company.is_active: return Response({'detail':'Company is already active.'},status=400)
         company.activation_token=uuid.uuid4(); company.save(update_fields=['activation_token','updated_at'])
         activation_url=f"{settings.FRONTEND_URL}/activate/{company.id}/{company.activation_token}"
-        send_mail_logging_failure('Activate your HRCloudPay company account',f'Activate your HRCloudPay account here:\n\n{activation_url}',settings.DEFAULT_FROM_EMAIL,[company.email],what='platform company activation')
+        sent=send_mail_logging_failure('Activate your HRCloudPay company account',f'Activate your HRCloudPay account here:\n\n{activation_url}',settings.DEFAULT_FROM_EMAIL,[company.email],what='platform company activation')
         audit(request.user,'system',f"Regenerated activation for {company.name}",company,'company',company.id)
-        return Response({'message':'A new activation link has been generated and emailed.','activation_url':activation_url})
+        # The return value used to be discarded and the response said "emailed"
+        # unconditionally, so a completely broken mail server produced the same
+        # green confirmation as a working one - and the activation_url was handed
+        # over alongside it, which is enough to keep an operator activating
+        # companies by hand and concluding the mail path was fine.
+        #
+        # A 503 is right here even though the token was regenerated: the caller
+        # asked for an email and did not get one. The link is still returned so a
+        # platform admin is not blocked by a mail outage - it is simply labelled
+        # as not having been sent.
+        if not sent:
+            return Response({
+                'detail':('The activation link was regenerated but the email was '
+                          'NOT delivered. Check `docker compose logs backend` for '
+                          'the reason, then fix SMTP under PLATFORM -> Email / SMTP.'),
+                'emailed': False,
+                'activation_url': activation_url,
+            },status=503)
+        return Response({'message':'A new activation link has been generated and emailed.','emailed':True,'activation_url':activation_url})
 
 
 class PlatformUsersView(APIView):
