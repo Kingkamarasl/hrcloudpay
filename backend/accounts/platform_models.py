@@ -303,6 +303,28 @@ class MarketingPage(models.Model):
     name = models.CharField(max_length=160)
     content = models.JSONField(default=dict, blank=True)
     is_published = models.BooleanField(default=True)
+
+    # Search metadata. Injected into the served HTML by hrcloudpay.seo, because
+    # every public route is a SPA route and they would otherwise all ship the
+    # same hardcoded title and description. Blank means "fall back", not "empty":
+    # an empty meta description tells a crawler the page has nothing to say.
+    meta_title = models.CharField(
+        max_length=120, blank=True, default='',
+        help_text='Overrides the title a crawler sees. Aim for 50-60 characters.',
+    )
+    meta_description = models.CharField(
+        max_length=320, blank=True, default='',
+        help_text='Overrides the description a crawler sees. Aim for 140-160.',
+    )
+    og_image_url = models.CharField(
+        max_length=500, blank=True, default='',
+        help_text='Absolute URL of the link-preview image. Blank shares without one.',
+    )
+    noindex = models.BooleanField(
+        default=False,
+        help_text='Keep out of search engines, and out of sitemap.xml.',
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name='marketing_pages_updated')

@@ -1,5 +1,6 @@
 from django.urls import path
 
+from .seo_views import PlatformSeoDetailView, PlatformSeoView
 from .platform import (PlatformDashboardView, PlatformCompaniesView, PlatformCompanyDetailView, PlatformCompanyActivationView, PlatformCompanySuspensionView, PlatformCompanyResendActivationView, PlatformUsersView, PlatformUserDetailView, PlatformUsageView, PlatformSubscriptionsView, PlatformOnboardingView, PlatformAuditLogsView, PlatformNotificationsView, PlatformSupportView, PlatformAnalyticsView, PlatformBillingPlansView, PlatformPaymentProvidersView, PlatformPaymentProviderToggleView, PlatformSubscriptionStatusView, PlatformCompany360View, PlatformPaymentTransactionsView, PlatformSystemHealthView, PlatformSecurityCenterView, PlatformFeatureFlagsView, PlatformFeatureFlagDetailView, PlatformSupportDetailView, PlatformGlobalSearchView, PaymentWebhookView, BillingPlansView, CompanyBillingView, CompanyBillingCheckoutView, CompanyBillingVerifyView, PublicMarketingPageView, PlatformMarketingPagesView, PlatformMarketingPageDetailView, PlatformAIConfigView, PlatformAITestView, PlatformEmailConfigView, PlatformEmailTestView, PlatformSiteBrandingView, CompanyBillingCancelView, CompanyBillingReactivateView, CompanyBillingInvoicesView)
 from .views import (
     PublicFeaturesView, ActivateView, CompanyAuditLogsView, CompanyUserDetailView,
@@ -36,6 +37,8 @@ urlpatterns = [
     path('platform/security-center/', PlatformSecurityCenterView.as_view(), name='platform-security-center'),
     path('platform/feature-flags/', PlatformFeatureFlagsView.as_view(), name='platform-feature-flags'),
     path('platform/feature-flags/<int:flag_id>/', PlatformFeatureFlagDetailView.as_view(), name='platform-feature-flag-detail'),
+    path('platform/seo/', PlatformSeoView.as_view(), name='platform-seo'),
+    path('platform/seo/<slug:slug>/', PlatformSeoDetailView.as_view(), name='platform-seo-detail'),
     path('platform/marketing-pages/', PlatformMarketingPagesView.as_view(), name='platform-marketing-pages'),
     path('platform/marketing-pages/<slug:slug>/', PlatformMarketingPageDetailView.as_view(), name='platform-marketing-page-detail'),
     path('platform/support/<int:ticket_id>/', PlatformSupportDetailView.as_view(), name='platform-support-detail'),

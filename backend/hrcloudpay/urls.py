@@ -5,7 +5,7 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 from rest_framework.permissions import AllowAny
 
 from .site_icons import serve_apple_touch_icon, serve_favicon
-from .views import serve_frontend, serve_media
+from .views import robots_view, serve_frontend, serve_media, sitemap_view
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -48,6 +48,12 @@ urlpatterns += [
     # brand mark rather than any tenant's data. See hrcloudpay/site_icons.py.
     re_path(r'^site-icon/favicon\.png$', serve_favicon, name='site-favicon'),
     re_path(r'^site-icon/apple-touch-icon\.png$', serve_apple_touch_icon, name='site-apple-touch-icon'),
+
+    # Crawler-facing files. Registered before the SPA catch-all below, or
+    # serve_frontend answers both with index.html and a crawler is handed an
+    # empty page where it expects a sitemap.
+    path('robots.txt', robots_view, name='robots'),
+    path('sitemap.xml', sitemap_view, name='sitemap'),
 ]
 
 # SPA catch-all: anything that isn't admin/api/static/media serves the

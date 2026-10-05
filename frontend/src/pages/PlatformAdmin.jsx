@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import Icon from '../components/Icon';
@@ -9,8 +9,147 @@ import { PLAN_ORDER, PLAN_LABELS, planLabel } from '../constants/plans';
 const PLANS = { starter:'Starter', business:'Business', professional:'Professional', scale:'Scale', enterprise:'Enterprise' };
 const tabs = [
   ['overview','Overview'], ['companies','Companies'], ['subscriptions','Billing'], ['usage','Usage'], ['content','Marketing content'],
-  ['onboarding','Onboarding'], ['support','Support'], ['notifications','Communications'], ['payments','Transactions'], ['audit','Audit log'], ['security','Security center'], ['analytics','Analytics'], ['users','Users'], ['health','System health'], ['flags','Feature flags'], ['integrations','Payments & API keys'],['ai','AI / NVIDIA NIM'],['email','Email / SMTP'],['branding','Site icon'], ['plans','Plans']
+  ['seo','Search (SEO)'], ['onboarding','Onboarding'], ['support','Support'], ['notifications','Communications'], ['payments','Transactions'], ['audit','Audit log'], ['security','Security center'], ['analytics','Analytics'], ['users','Users'], ['health','System health'], ['flags','Feature flags'], ['integrations','Payments & API keys'],['ai','AI / NVIDIA NIM'],['email','Email / SMTP'],['branding','Site icon'], ['plans','Plans']
 ];
+
+function SeoEditor({onError}){
+  const [data,setData]=useState(null);
+  const [loading,setLoading]=useState(true);
+  const [open,setOpen]=useState(null);
+  const [draft,setDraft]=useState({});
+  const [saving,setSaving]=useState(false);
+  const [notice,setNotice]=useState('');
+
+  const load=useCallback(()=>{
+    setLoading(true);
+    return api.get('/auth/platform/seo/')
+      .then(next=>{setData(next);setLoading(false)})
+      .catch(e=>{setLoading(false);onError(e.message||'Could not load search metadata.')});
+  },[onError]);
+
+  useEffect(()=>{load()},[load]);
+
+  function startEditing(page){
+    setOpen(page.slug);
+    setNotice('');
+    // Seeded from the row, not from the effective values. Writing the effective
+    // fallback into the field on save would quietly promote a code default into
+    // stored content, after which editing the fallback in a deploy stops having
+    // any effect on that page - and nothing would say why.
+    setDraft({
+      meta_title:page.meta_title||'', meta_description:page.meta_description||'',
+      og_image_url:page.og_image_url||'', noindex:!!page.noindex,
+    });
+  }
+
+  async function save(slug){
+    setSaving(true);setNotice('');
+    try{
+      const next=await api.patch(`/auth/platform/seo/${slug}/`,draft);
+      setData(current=>({...current,pages:current.pages.map(p=>p.slug===slug?next:p)}));
+      setOpen(null);
+      setNotice(`Saved. ${slug} now reads "${next.effective.title}" to a crawler.`);
+    }catch(e){onError(e.message||'Could not save the search metadata.')}
+    finally{setSaving(false)}
+  }
+
+  async function useFallback(page){
+    setDraft(current=>({...current,meta_title:'',meta_description:'',og_image_url:''}));
+    if(page.meta_title||page.meta_description||page.og_image_url){
+      try{
+        await api.patch(`/auth/platform/seo/${page.slug}/`,{
+          meta_title:'',meta_description:'',og_image_url:'',noindex:!!page.noindex,
+        });
+        const next=await api.get('/auth/platform/seo/');
+        setData(next);
+        setNotice(`${page.slug} is back to the built-in description.`);
+      }catch(e){onError(e.message||'Could not clear the override.')}
+    }
+  }
+
+  if(loading)return <div className="page-loading">Loading public pages...</div>;
+  if(!data)return null;
+
+  const titleOver=d=>((d.meta_title||'').trim().length>data.guidance_title_target);
+  const descOver=d=>((d.meta_description||'').trim().length>data.guidance_description_target);
+  const customized=p=>p.meta_title||p.meta_description||p.og_image_url||p.noindex;
+
+  return <div>
+    <div className="helper-callout" style={{display:'block'}}>
+      <div><strong>These are the tags a crawler reads, not the page copy.</strong> Every public URL is a route in the React app, so they are all served one HTML shell; the tags are injected per route at request time. Page content is edited under <b>Marketing content</b>.</div>
+      <div className="table-subline" style={{marginTop:'.4rem'}}>
+        Sitemap: <a href={data.sitemap_url} target="_blank" rel="noreferrer">{data.sitemap_url}</a>
+        {'  '}<span>Robots: <a href={data.robots_url} target="_blank" rel="noreferrer">{data.robots_url}</a></span>
+      </div>
+    </div>
+
+    {notice&&<div className="alert alert-success">{notice}</div>}
+
+    <div className="panel table-panel">
+      <div className="panel-head">
+        <div><h2>Public pages</h2><p>Seven indexable URLs. Blank fields fall back to the text shipped with the app.</p></div>
+      </div>
+      <div className="table-wrap"><table className="data-table modern-table">
+        <thead><tr><th>Page</th><th>Title a crawler sees</th><th>Indexed</th><th>Source</th><th></th></tr></thead>
+        <tbody>
+          {data.pages.map(page=>{
+            const isOpen=open===page.slug;
+            return <>
+              <tr key={page.slug}>
+                <td><strong>{page.name}</strong><small className="table-subline">{page.path}</small></td>
+                <td>
+                  <div>{page.effective.title}</div>
+                  <small className="table-subline">{page.effective.description}</small>
+                  {page.noindex&&<small className="table-subline" style={{color:'var(--danger)'}}>noindex, nofollow &middot; removed from sitemap.xml</small>}
+                </td>
+                <td>{page.noindex?<span className="mini-status none">No</span>:<span className="mini-status active">Yes</span>}</td>
+                <td>{customized(page)?<span className="mini-status active">Custom</span>:<span className="mini-status none">Built-in</span>}</td>
+                <td><button className="btn btn-secondary compact" onClick={()=>isOpen?setOpen(null):startEditing(page)}>{isOpen?'Cancel':'Edit'}</button></td>
+              </tr>
+              {isOpen&&<tr key={`${page.slug}-edit`}><td colSpan="5">
+                <div className="form-panel">
+                  <div className="form-row">
+                    <div>
+                      <label>Meta title</label>
+                      <input value={draft.meta_title||''} onChange={e=>setDraft({...draft,meta_title:e.target.value})} placeholder={page.fallbacks.title}/>
+                      <small className="table-subline">
+                        {`${(draft.meta_title||'').trim().length} characters`}
+                        {titleOver(draft)&&` - over ${data.guidance_title_target}, so search results will truncate it`}
+                        {!draft.meta_title?.trim()&&' - blank, so the built-in title is served'}
+                      </small>
+                    </div>
+                    <div>
+                      <label>Link preview image URL</label>
+                      <input value={draft.og_image_url||''} onChange={e=>setDraft({...draft,og_image_url:e.target.value})} placeholder="https://..."/>
+                      <small className="table-subline">Absolute URL. Blank shares without an image.</small>
+                    </div>
+                  </div>
+                  <div>
+                    <label>Meta description</label>
+                    <textarea rows="3" value={draft.meta_description||''} onChange={e=>setDraft({...draft,meta_description:e.target.value})} placeholder={page.fallbacks.description}/>
+                    <small className="table-subline">
+                      {`${(draft.meta_description||'').trim().length} characters`}
+                      {descOver(draft)&&` - over ${data.guidance_description_target}, so search results will truncate it`}
+                      {!draft.meta_description?.trim()&&' - blank, so the built-in description is served'}
+                    </small>
+                  </div>
+                  <label className="checkbox-label">
+                    <input type="checkbox" checked={!!draft.noindex} onChange={e=>setDraft({...draft,noindex:e.target.checked})}/>
+                    <span>Keep out of search engines<small className="table-subline">Adds <code>noindex, nofollow</code> and removes this URL from sitemap.xml.</small></span>
+                  </label>
+                  <div className="table-tools">
+                    <button className="btn btn-primary compact" onClick={()=>save(page.slug)} disabled={saving}>{saving?'Saving...':'Save metadata'}</button>
+                    <button className="btn btn-secondary compact" onClick={()=>useFallback(page)}>Reset to built-in</button>
+                  </div>
+                </div>
+              </td></tr>}
+            </>;
+          })}
+        </tbody>
+      </table></div>
+    </div>
+  </div>;
+}
 
 function Plans({plans,onSave,onEdit}){
   const [editing,setEditing]=useState(null);
@@ -108,6 +247,7 @@ export default function PlatformAdmin(){
         {tab==='health'&&<SystemHealth data={data.health} onRefresh={load}/>}
         {tab==='flags'&&<FeatureFlags items={data.flags} onCreate={async(payload)=>{try{await api.post('/auth/platform/feature-flags/',payload);await load();notify('Feature flag created.')}catch(e){setError(e.message||'Could not create feature flag')}}} onSave={async(id,payload)=>{try{await api.patch(`/auth/platform/feature-flags/${id}/`,payload);await load();notify('Feature flag updated.')}catch(e){setError(e.message)}}}/>} 
         {tab==='branding'&&<SiteBranding state={data.branding} onChanged={async(s)=>{setData({...data,branding:s});notify('Site icon updated.')}} onError={setError}/>}
+        {tab==='seo'&&<SeoEditor onError={setError}/>}
       {deleteTarget&&<DeleteUserModal user={deleteTarget} busy={busy} onDeactivate={()=>deactivateUser(deleteTarget)} onDeleted={()=>deleteUser(deleteTarget)} onClose={()=>setDeleteTarget(null)}/>}
       {tab==='ai'&&<AISettings config={data.aiConfig} onSave={async(payload)=>{try{const r=await api.post('/auth/platform/ai-config/',payload);setData({...data,aiConfig:r});notify('NVIDIA AI configuration saved.')}catch(e){setError(e.message||'Could not save AI configuration')}}} onTest={async()=>{try{const r=await api.post('/auth/platform/ai-config/test/',{});notify(r.message||'NVIDIA AI connection successful.')}catch(e){setError(e.message||'NVIDIA AI connection failed')}}}/>}
         {tab==='email'&&<EmailSettings config={data.emailConfig} onSave={async(payload)=>{try{const r=await api.post('/auth/platform/email-config/',payload);setData({...data,emailConfig:r});notify(r.in_use?'Email settings saved and now in use.':'Email settings saved. Not active yet.');}catch(e){setError(e.message||'Could not save email settings')}}} onTest={async(to)=>{try{const r=await api.post('/auth/platform/email-config/test/',to?{to}:{});notify(r.detail||'Test message sent.');}catch(e){setError(e.message||'Test send failed')}}}/>} 

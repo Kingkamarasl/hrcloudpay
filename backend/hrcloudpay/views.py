@@ -6,6 +6,7 @@ from django.core.files.storage import default_storage
 from django.http import FileResponse, Http404, HttpResponse
 from django.utils.http import http_date
 
+from . import seo
 from .media_access import may_access
 
 # Formats a browser may render directly. This is an allow-list rather than a
@@ -155,12 +156,55 @@ def serve_frontend(request):
 
     stat = index_path.stat()
     etag = f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"'
+
+    # Every public route is a route in the SPA, so they are all this same file.
+    # Give each one its own title, description, canonical and robots tags, or a
+    # crawler sees seven URLs all claiming to be the homepage.
+    #
+    # The ETag has to move with the route. It is derived only from the file's
+    # mtime and size, which are identical for every URL, so leaving it alone
+    # would let a cache hand back a 304 for /pricing to a request for /security
+    # - and the client would then serve the pricing description on the security
+    # page. A route in the ETag makes the conditional request mean what it says.
+    page = seo.page_for_path(request.path)
+    if page is not None:
+        meta = seo.meta_for(page)
+        html = seo.inject_into_html(
+            index_path.read_text(encoding='utf-8'), meta,
+        )
+        etag = f'"{stat.st_mtime_ns:x}-{stat.st_size:x}-{page.slug}"'
+    else:
+        html = index_path.read_text(encoding='utf-8')
+
     if request.META.get('HTTP_IF_NONE_MATCH') == etag:
         response = HttpResponse(status=304)
     else:
-        response = HttpResponse(index_path.read_text(encoding='utf-8'),
-                                content_type='text/html')
+        response = HttpResponse(html, content_type='text/html')
     response['ETag'] = etag
     response['Last-Modified'] = http_date(stat.st_mtime)
     response['Cache-Control'] = 'no-cache, must-revalidate'
     return response
+
+
+def sitemap_view(request):
+    """`/sitemap.xml`, built from the published public pages.
+
+    A view rather than a static file because the URL set and the last-modified
+    dates come from the database. A hand-written sitemap.xml goes stale the
+    moment someone unpublishes a page, and nothing points at the staleness.
+    """
+    return HttpResponse(
+        seo.sitemap_xml(), content_type='application/xml; charset=utf-8',
+    )
+
+
+def robots_view(request):
+    """`/robots.txt`.
+
+    The one line that matters is `Disallow: /api/`. The OpenAPI schema and the
+    Swagger UI are served AllowAny, so without it a crawler is invited to index
+    the entire API surface - endpoint names, parameters, and the auth scheme.
+    """
+    return HttpResponse(
+        seo.robots_txt(), content_type='text/plain; charset=utf-8',
+    )
