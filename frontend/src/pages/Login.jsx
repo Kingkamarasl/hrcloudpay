@@ -73,7 +73,12 @@ export default function Login() {
         <button className="btn btn-primary" type="submit" disabled={submitting}>
           {submitting ? 'Signing in…' : (mfaRequired ? 'Verify code' : 'Sign in')}
         </button>
-        {mfaRequired && <p className="auth-footer"><button type="button" className="btn btn-link" onClick={() => { setMfaRequired(false); setMfaCode(''); setError(''); }}>Back to sign in</button></p>}
+        {!mfaRequired && (
+            <p className="auth-footer">
+              <Link to="/forgot-password">Forgot your password?</Link>
+            </p>
+          )}
+{mfaRequired && <p className="auth-footer"><button type="button" className="btn btn-link" onClick={() => { setMfaRequired(false); setMfaCode(''); setError(''); }}>Back to sign in</button></p>}
         <p className="auth-footer">
           New to HRCLOUDPAY? <Link to="/register">Create your company workspace</Link>
         </p>

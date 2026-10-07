@@ -6,11 +6,18 @@ from .views import (
     PublicFeaturesView, ActivateView, CompanyAuditLogsView, CompanyUserDetailView,
     CompanyUsersView, CompanySettingsView, CompanyLogoView, LoginView, LogoutView, MeView, RegisterView,
 )
+from .password_reset import PasswordResetConfirmView, PasswordResetRequestView
 
 urlpatterns = [
     path('register/', RegisterView.as_view(), name='register'),
     path('activate/<int:company_id>/<uuid:token>/', ActivateView.as_view(), name='activate'),
     path('login/', LoginView.as_view(), name='login'),
+    # Password reset. Two endpoints rather than one because the confirm step
+    # carries a secret and needs its own throttle bucket: a shared rate would
+    # let one attacker exhaust the request allowance and lock a real user out of
+    # their own recovery, or brute-force tokens against the confirm budget.
+    path('password-reset/', PasswordResetRequestView.as_view(), name='password-reset'),
+    path('password-reset/confirm/', PasswordResetConfirmView.as_view(), name='password-reset-confirm'),
     path('logout/', LogoutView.as_view(), name='logout'),
     path('me/', MeView.as_view(), name='me'),
     path('features/', PublicFeaturesView.as_view(), name='public-features'),

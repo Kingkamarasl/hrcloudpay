@@ -33,6 +33,7 @@ const PayrollSetup = lazy(() => import('./pages/PayrollSetup'));
 const PayrollExtras = lazy(() => import('./pages/PayrollExtras'));
 const Pricing = lazy(() => import('./pages/Pricing'));
 const Register = lazy(() => import('./pages/Register'));
+const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const Team = lazy(() => import('./pages/Team'));
 const PlatformAdmin = lazy(() => import('./pages/PlatformAdmin'));
 const AuditLogs = lazy(() => import('./pages/AuditLogs'));
@@ -82,6 +83,10 @@ export default function App() {
 
                     <Route path="/login" element={<Login />} />
                     <Route path="/register" element={<Register />} />
+{/* Public: a person who has just followed a reset link has no session,
+    which is the whole point of the flow. */}
+<Route path="/forgot-password" element={<ResetPassword />} />
+<Route path="/reset-password/:uid/:token" element={<ResetPassword />} />
                     <Route path="/activate/:companyId/:token" element={<Activate />} />
 
                     <Route
