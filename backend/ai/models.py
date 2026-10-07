@@ -1,6 +1,8 @@
 from django.conf import settings
 from django.db import models
 
+from . import providers as ai_providers
+
 
 class AIConversation(models.Model):
     company = models.ForeignKey('accounts.Company', on_delete=models.CASCADE, related_name='ai_conversations')
@@ -115,7 +117,8 @@ class KnowledgeChunk(models.Model):
 
 class AIProviderConfig(models.Model):
     """Site-wide AI provider configuration. Managed only by Django site admins."""
-    provider = models.CharField(max_length=40, default='nvidia_nim', editable=False)
+    provider = models.CharField(max_length=40, default='nvidia_nim',
+                                choices=ai_providers.as_choices())
     display_name = models.CharField(max_length=100, default='NVIDIA NIM')
     api_key_encrypted = models.TextField(blank=True)
     chat_api_url = models.URLField(default='https://integrate.api.nvidia.com/v1/chat/completions')
@@ -125,6 +128,11 @@ class AIProviderConfig(models.Model):
     # 2026-07-20 and now answer HTTP 410, so a fresh install was dead on arrival.
     chat_model = models.CharField(max_length=200, default='nvidia/nemotron-3-super-120b-a12b')
     embedding_model = models.CharField(max_length=200, default='nvidia/nemotron-3-embed-1b')
+    # False for a provider that publishes no embedding model - OpenRouter's
+    # catalogue has none. Recorded rather than inferred from a blank URL, because
+    # "no endpoint" and "endpoint deliberately unset" are different states and
+    # only one of them should silently break the knowledge base.
+    provides_embeddings = models.BooleanField(default=True)
     temperature = models.FloatField(default=0.3)
     max_tokens = models.PositiveIntegerField(default=1200)
     request_timeout_seconds = models.PositiveIntegerField(default=90)
@@ -134,6 +142,19 @@ class AIProviderConfig(models.Model):
     class Meta:
         verbose_name = 'AI provider configuration'
         verbose_name_plural = 'AI provider configuration'
+        # No single-active constraint here, deliberately.
+        #
+        # The obvious one - unique on is_active where true - was tried and is
+        # wrong for this schema. `is_active` defaults to True, so the constraint
+        # means a second row can never be created at all: a data migration that
+        # moves existing rows onto live models dies on it, and any future code
+        # path that provisions a second configuration dies on it too.
+        #
+        # The guarantee is enforced in the save path instead, which is the only
+        # place that can decide what activating one row implies for the others.
+        # Resolution was `.filter(is_active=True).first()`, so two actives made
+        # the winner whichever the database returned - different between a query
+        # and its replica, with nothing indicating a choice had been made.
 
     def __str__(self):
         return f'{self.display_name} ({"Active" if self.is_active else "Inactive"})'

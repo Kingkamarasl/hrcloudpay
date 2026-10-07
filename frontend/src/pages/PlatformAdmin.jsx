@@ -439,13 +439,30 @@ function SiteBranding({state,onChanged,onError}){
 function AISettings({config,onSave,onTest}){
   const [form,setForm]=useState(null);
   useEffect(()=>{if(config)setForm({...config,api_key:''})},[config]);
+  const catalogue=form?.providers||[];
+  const current=catalogue.find(p=>p.key===form.provider);
+  const chatOnly=catalogue.length>0&&current&&!current.provides_embeddings;
+  // Switching provider applies that provider's endpoints and models here,
+  // mirroring what the server does on save. Without it the admin picks
+  // OpenRouter and is still shown NVIDIA's endpoints and model until they
+  // save and reload - which looks like the selector not working.
+  function chooseProvider(key){
+    const spec=catalogue.find(p=>p.key===key); if(!spec)return;
+    setForm({...form,provider:spec.key,display_name:spec.label,
+      provides_embeddings:spec.provides_embeddings,
+      chat_api_url:spec.chat_api_url,
+      embeddings_api_url:spec.embeddings_api_url,
+      chat_model:spec.default_chat_model,
+      embedding_model:spec.default_embedding_model});
+  }
   if(!form)return <div className="card page-loading">Loading NVIDIA AI configuration…</div>;
   const set=(key,value)=>setForm({...form,[key]:value});
   return <div className="control-grid">
     <div className="card">
-      <div className="section-head"><div><div className="eyebrow">Platform AI</div><h2>NVIDIA NIM configuration</h2><p>All HRCloudPay AI credentials and model settings are controlled by the site administrator. Tenant users never see the API key.</p></div><span className={`admin-status ${form.configured?'active':'pending'}`}>{form.configured?'Configured':'Not configured'}</span></div>
-      <div className="form-row"><div><label>Provider</label><input value="NVIDIA NIM" disabled/></div><div><label>Display name</label><input value={form.display_name||''} onChange={e=>set('display_name',e.target.value)}/></div></div>
-      <label>API key</label><input type="password" value={form.api_key||''} onChange={e=>set('api_key',e.target.value)} placeholder={form.api_key_set?'Leave blank to keep current key':'Paste NVIDIA API key'}/>
+      <div className="section-head"><div><div className="eyebrow">Platform AI</div><h2>{form.display_name||'AI'} configuration</h2><p>All HRCloudPay AI credentials and model settings are controlled by the site administrator. Tenant users never see the API key.</p></div><span className={`admin-status ${form.configured?'active':'pending'}`}>{form.configured?'Configured':'Not configured'}</span></div>
+      <div className="form-row"><div><label>Provider</label><select value={form.provider||'nvidia_nim'} onChange={e=>chooseProvider(e.target.value)}>{catalogue.length?catalogue.map(p=><option key={p.key} value={p.key}>{p.label}</option>):<option value="nvidia_nim">NVIDIA NIM</option>}</select>{current?.model_examples?.length>0&&<small className="table-subline">Models it accepts: {current.model_examples.slice(0,3).join(', ')}</small>}</div><div><label>Display name</label><input value={form.display_name||''} onChange={e=>set('display_name',e.target.value)}/></div></div>
+      {chatOnly&&<div className="alert alert-warning"><div><strong>{current.label} serves chat only.</strong> It publishes no embedding model, so the knowledge base keeps using a separate embedding provider. {form.embeddings_configured ? (`Currently ${form.embeddings_provider}.`) : (`No embedding provider is configured yet, so knowledge-base indexing will fail until one is added.`)}</div></div>}
+      <label>API key</label><input type="password" value={form.api_key||''} onChange={e=>set('api_key',e.target.value)} placeholder={form.api_key_set?'Leave blank to keep current key':(`Paste ${current?.api_key_hint||'provider API key'}`)}/>
       <div className="form-row"><div><label>Chat API URL</label><input value={form.chat_api_url||''} onChange={e=>set('chat_api_url',e.target.value)}/></div><div><label>Embeddings API URL</label><input value={form.embeddings_api_url||''} onChange={e=>set('embeddings_api_url',e.target.value)}/></div></div>
       <div className="form-row"><div><label>Chat model</label><input value={form.chat_model||''} onChange={e=>set('chat_model',e.target.value)}/></div><div><label>Embedding model</label><input value={form.embedding_model||''} onChange={e=>set('embedding_model',e.target.value)}/></div></div>
       <div className="form-row"><div><label>Temperature</label><input type="number" min="0" max="2" step="0.1" value={form.temperature??0.3} onChange={e=>set('temperature',Number(e.target.value))}/></div><div><label>Max tokens</label><input type="number" min="1" value={form.max_tokens??1200} onChange={e=>set('max_tokens',Number(e.target.value))}/></div></div>

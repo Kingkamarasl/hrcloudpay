@@ -532,7 +532,7 @@ class EmbeddingBatchingTests(AITestBase):
             ]})
 
         with patch.object(urllib.request, 'urlopen', fake_urlopen), \
-             patch.object(embeddings, 'get_active_config') as cfg, \
+             patch.object(embeddings, 'get_embeddings_config') as cfg, \
              patch.object(embeddings, 'decrypt_api_key', return_value='k'):
             cfg.return_value.embeddings_api_url = 'https://example.test/e'
             cfg.return_value.embedding_model = 'm'
@@ -548,7 +548,7 @@ class EmbeddingBatchingTests(AITestBase):
 
         from ai import embeddings
         from ai.nvidia import NVIDIAError
-        with patch.object(embeddings, 'get_active_config') as cfg, \
+        with patch.object(embeddings, 'get_embeddings_config') as cfg, \
              patch.object(embeddings, 'decrypt_api_key', return_value='k'), \
              patch.object(urllib.request, 'urlopen',
                           lambda request, timeout=None: FakeResponse({'data': [{'index': 0, 'embedding': [0.1]}]})):

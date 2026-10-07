@@ -1352,12 +1352,28 @@ class PlatformAIConfigView(APIView):
 
     def get(self, request):
         from ai.models import AIProviderConfig
+        from ai.providers import as_catalogue, get_spec
         config = AIProviderConfig.objects.filter(is_active=True).first() or AIProviderConfig.objects.first()
         if not config:
-            return Response({'configured': False, 'provider': 'nvidia_nim'})
+            return Response({
+                'configured': False, 'provider': 'nvidia_nim',
+                'providers': as_catalogue(), 'embeddings_configured': False,
+            })
+        # Reported so the console can say, before anyone indexes a knowledge
+        # base, whether the thing that can embed is configured at all. The
+        # active provider may be OpenRouter, which cannot embed.
+        embedder = AIProviderConfig.objects.filter(
+            provides_embeddings=True).exclude(api_key_encrypted='').first()
+        spec = get_spec(config.provider)
         return Response({
             'configured': bool(config.api_key_encrypted),
             'provider': config.provider,
+            'providers': as_catalogue(),
+            'provides_embeddings': config.provides_embeddings,
+            'embeddings_configured': bool(embedder),
+            'embeddings_provider': embedder.display_name if embedder else None,
+            'provider_notes': spec.notes,
+            'model_examples': list(spec.model_examples),
             'display_name': config.display_name,
             'chat_api_url': config.chat_api_url,
             'embeddings_api_url': config.embeddings_api_url,
@@ -1374,12 +1390,40 @@ class PlatformAIConfigView(APIView):
     def post(self, request):
         from ai.models import AIProviderConfig
         from ai.nvidia import chat_completion, NVIDIAError
+        from ai.providers import PROVIDERS, get_spec
         config = AIProviderConfig.objects.first()
         if not config:
             config = AIProviderConfig()
+        # Choosing a provider applies its endpoints, models and capability
+        # flag. `config.provider = 'nvidia_nim'` used to run unconditionally
+        # on every save, so the field was not merely hidden from the console -
+        # the database could not hold any other answer.
+        #
+        # Only on an actual change, and only to fields the request did not
+        # also send: an operator who picked a model must not have it
+        # overwritten by the preset the next time they save an unrelated field.
+        requested = str(request.data.get('provider') or '').strip()
+        if requested and requested in PROVIDERS and requested != config.provider:
+            spec = get_spec(requested)
+            config.provider = requested
+            config.display_name = spec.label
+            config.provides_embeddings = spec.provides_embeddings
+            for field, value in (
+                    ('chat_api_url', spec.chat_api_url),
+                    ('embeddings_api_url', spec.embeddings_api_url),
+                    ('chat_model', spec.default_chat_model),
+                    ('embedding_model', spec.default_embedding_model)):
+                if field not in request.data:
+                    setattr(config, field, value)
         for field in ('display_name', 'chat_api_url', 'embeddings_api_url', 'chat_model', 'embedding_model'):
             if field in request.data:
-                setattr(config, field, str(request.data.get(field) or '').strip())
+                value = str(request.data.get(field) or '').strip()
+                # A provider with no embeddings endpoint must not keep the
+                # previous provider's URL: it would look configured, and the
+                # knowledge base would post to a host that never had the path.
+                if field == 'embeddings_api_url' and not config.provides_embeddings:
+                    value = ''
+                setattr(config, field, value)
         for field in ('temperature', 'max_tokens', 'request_timeout_seconds'):
             if field in request.data:
                 try:
@@ -1392,8 +1436,21 @@ class PlatformAIConfigView(APIView):
         api_key = str(request.data.get('api_key') or '').strip()
         if api_key:
             config.set_api_key(api_key)
-        config.provider = 'nvidia_nim'
-        config.save()
+        # Activating one row deactivates the others, in the same transaction
+        # as the save. Resolution is `.filter(is_active=True).first()`, so two
+        # actives left the winner to whichever row the database happened to
+        # return - not reproducible between a query and its replica, and with
+        # nothing in the interface indicating a choice had been made.
+        #
+        # Enforced here rather than as a unique constraint because is_active
+        # defaults to True, which makes such a constraint mean a second row
+        # can never be created at all - it broke a data migration that moves
+        # rows onto live models.
+        with transaction.atomic():
+            if config.is_active:
+                AIProviderConfig.objects.exclude(pk=config.pk).filter(
+                    is_active=True).update(is_active=False)
+            config.save()
         # The AI provider configuration is site-wide and has no company, so the audit
         # row must not be given one. Passing `config` here assigned a non-Company to
         # AuditLog.company and raised ValueError, which surfaced as a 500 *after* the

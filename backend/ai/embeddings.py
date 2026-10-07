@@ -1,7 +1,7 @@
 import math
 
 from .nvidia import NVIDIAError, post_json
-from .provider import AIConfigurationError, decrypt_api_key, get_active_config
+from .provider import AIConfigurationError, decrypt_api_key, get_embeddings_config
 
 # Verified live against the NVIDIA catalog. The previous default,
 # nvidia/llama-3.2-nemoretriever-300m-embed-v2, reached end of life on 2026-07-20
@@ -46,7 +46,10 @@ def embed_texts(texts, *, input_type='passage'):
     if not cleaned:
         return []
     try:
-        config = get_active_config()
+        # Not get_active_config: the active provider may be OpenRouter, which has
+        # no embedding endpoint. Resolving an embeddings-capable configuration
+        # keeps the knowledge base working while chat runs somewhere else.
+        config = get_embeddings_config()
         api_key = decrypt_api_key(config)
     except AIConfigurationError as exc:
         raise NVIDIAError(str(exc)) from exc

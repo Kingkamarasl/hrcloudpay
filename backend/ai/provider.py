@@ -28,6 +28,44 @@ def get_active_config():
     return config
 
 
+def get_embeddings_config():
+    """A configuration that can actually produce embeddings.
+
+    Deliberately not ``get_active_config()``. OpenRouter publishes chat
+    completions and no embedding model at all, so an installation that points
+    chat at it has - by doing the right thing - lost its embedding provider. If
+    this simply reused the active configuration, the first knowledge-base index
+    would fail with an HTTP 404 from a URL that never existed, which reads as a
+    provider outage rather than as a missing capability.
+
+    So the active configuration is used when it can embed, and otherwise the most
+    recently updated configuration that can is. An admin who wants Claude for
+    chat keeps an NVIDIA row configured and this keeps returning it.
+
+    Raises rather than returning None: the callers all need a usable config, and
+    a message naming the fix is more use than a NoneType traceback.
+    """
+    active = AIProviderConfig.objects.filter(is_active=True).first()
+    if active is not None and active.provides_embeddings:
+        if active.api_key_encrypted:
+            return active
+    fallback = (
+        AIProviderConfig.objects
+        .filter(provides_embeddings=True)
+        .exclude(api_key_encrypted='')
+        .order_by('-updated_at')
+        .first()
+    )
+    if fallback is not None:
+        return fallback
+    raise AIConfigurationError(
+        'No AI provider that can produce embeddings is configured. OpenRouter '
+        'serves chat only, so an installation using it for chat still needs an '
+        'embedding provider (NVIDIA NIM ships one) configured under Platform '
+        'Admin -> AI / NVIDIA NIM before the knowledge base can be indexed.'
+    )
+
+
 def decrypt_api_key(config):
     try:
         return _fernet().decrypt(config.api_key_encrypted.encode('utf-8')).decode('utf-8')
