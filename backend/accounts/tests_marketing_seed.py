@@ -181,7 +181,18 @@ class SeededPageTests(unittest.TestCase):
         editing the seed, the two drift and a visitor sees different words
         depending on whether the API answered.
         """
-        fallback_pages = ('home', 'security')
+        # 'home' has moved out of here. This check compares the JSX fallback
+        # against the seed migration's own table, which is the right input
+        # only while the seed is the last thing to touch that page.
+        # Migration 0026 repositions the homepage after it, so the seed's
+        # table is now a state no install ever reaches and this assertion
+        # could only pass by demanding the JSX keep saying something the
+        # deployed site has replaced.
+        #
+        # The authoritative check moved to
+        # hrcloudpay/tests_homepage_positioning.py, which compares the JSX
+        # fallback against the copy a migrated database actually holds.
+        fallback_pages = ('security',)
         for slug in fallback_pages:
             component = PUBLIC_ROUTES['/' if slug == 'home' else '/security']
             jsx = ' '.join(

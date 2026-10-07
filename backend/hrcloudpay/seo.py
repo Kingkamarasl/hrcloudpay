@@ -60,11 +60,11 @@ PUBLIC_PAGES: tuple[PublicPage, ...] = (
     PublicPage(
         path='/',
         slug='home',
-        title='HRCloudPay - People, Payroll & AI HR Operations',
+        title='HRCloudPay - Smarter HR & Payroll for African Businesses',
         description=(
-            'Payroll, employee records, HR documents and statutory compliance in '
-            'one secure workspace, with an AI assistant that answers from your own '
-            'policies.'
+            'All-in-one HR, payroll and workforce management for African businesses. '
+            'Country-specific statutory rules, attendance, leave, compliance and an '
+            'AI HR assistant.'
         ),
         priority='1.0',
         changefreq='weekly',

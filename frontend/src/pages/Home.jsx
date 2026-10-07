@@ -9,11 +9,11 @@ const CURRENCIES = ['GNF', 'NGN', 'GHS', 'SLL', 'LRD'];
 // workspace preview, so it stays in JSX. This constant is the fallback for when
 // the content endpoint is unavailable.
 const DEFAULT_HERO = {
-  eyebrow: 'The intelligent operating system for people, payroll & HR',
-  title: 'Run your people operations',
-  title_accent: 'with clarity.',
-  subtitle: 'HRCloudPay brings payroll, employee 360°, attendance, leave, compliance, documents, and an AI HR assistant into one secure workspace.',
-  primary_cta: 'Start for free',
+  eyebrow: 'People · Payroll · Progress',
+  title: 'Smarter HR & Payroll for a',
+  title_accent: 'Stronger Africa.',
+  subtitle: 'HRCloudPay is an all-in-one HR, payroll and workforce management platform built for African businesses. Simplify your operations, stay compliant, and focus on what matters most — your people.',
+  primary_cta: 'Build Your Stronger Workforce',
   primary_href: '/register',
   secondary_cta: 'Explore the platform',
   secondary_href: '/platform',
@@ -65,12 +65,12 @@ function HeroWorkspace() {
 }
 
 const PILLARS = [
-  ['01', 'Payroll', 'Run payroll with company-specific pay rules, review stages, statutory configuration, and a clear approval trail.', 'Payroll'],
-  ['02', 'Employee 360°', 'Keep contracts, documents, warnings, attendance, leave, employment status, and history together.', 'HR'],
-  ['03', 'AI HR assistant', 'Ask questions about your company’s HR knowledge and get grounded answers with source citations.', 'AI'],
-  ['04', 'Document intelligence', 'Extract, organize, index, and search HR documents with page and section context.', 'Docs'],
-  ['05', 'Compliance & audit', 'Make sensitive actions traceable with role-aware access, audit events, and compliance evidence.', 'Trust'],
-  ['06', 'Connected operations', 'Create a foundation for integrations, reporting, multi-country workflows, and future automation.', 'Scale'],
+  ['01', 'Employee Management', 'One record per employee: contracts, documents, job details, employment history and status, in one place.', 'People'],
+  ['02', 'Automated Payroll', 'Run pay runs from contracts, attendance, approved leave, overtime, insurance and advances, with a clear approval trail.', 'Payroll'],
+  ['03', 'Attendance & Time Tracking', 'Check-in and check-out, attendance logs, timesheets and shifts, feeding payroll directly.', 'Time'],
+  ['04', 'Leave Management', 'Leave types, balances and requests with team approvals, so time off is recorded rather than remembered.', 'Leave'],
+  ['05', 'Compliance & Security', 'Country-specific statutory rules, an append-only audit chain, and role-based access on sensitive actions.', 'Trust'],
+  ['06', 'AI-Powered HR Assistant', 'Ask questions about people, leave, attendance, payroll and recruitment, and get grounded answers with citations.', 'AI'],
 ];
 
 const AI_FEATURES = [
