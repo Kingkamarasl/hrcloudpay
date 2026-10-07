@@ -90,6 +90,12 @@ input, select {
 .import-failures li { margin-bottom: 0.35rem; line-height: 1.45; }
 .import-failures strong { font-size: 0.82rem; }
 
+/* Shown on every platform-console tab while the installation cannot send mail.
+   The button sits beside the text rather than under it, because the whole point
+   is that this reads as one actionable thing. */
+.platform-mail-warning { display: flex; align-items: center; gap: 1rem; justify-content: space-between; }
+.platform-mail-warning > div:first-child { flex: 1; }
+
 /* App shell */
 .app-shell { display: flex; min-height: 100vh; }
 .sidebar {

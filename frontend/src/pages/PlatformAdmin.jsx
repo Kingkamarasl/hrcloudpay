@@ -222,6 +222,20 @@ export default function PlatformAdmin(){
       <div className="platform-sidebar-footer"><div className="platform-secure"><span></span><div><strong>Platform secure</strong><small>Audit logging enabled</small></div></div><button onClick={()=>setTab('integrations')}><Icon name="settings" size={15}/> Platform settings</button><Link className="platform-exit" to="/dashboard"><Icon name="arrow" size={15}/> Back to workspace</Link></div>
     </aside>
     <main className="platform-admin-main">
+      {/* Every public signup depends on this and nothing else in the console
+          fails when it is missing: activation mail goes to the container log,
+          the company registers, and the person waiting for the link has no way
+          to know why it never arrived. A buyer who hits this on a fresh install
+          would otherwise file a ticket instead of flipping one switch. */}
+      {data?.emailConfig && !data.emailConfig.in_use && (
+        <div className="alert alert-warning platform-mail-warning">
+          <div><strong>This installation cannot send email.</strong> Company
+          activation links, password resets and invitations go to the container log
+          instead of the recipient, and a company registered through the public form
+          can never be activated.</div>
+          <button className="btn btn-primary compact" onClick={()=>{setTab('email');setSearch('')}}>Configure email</button>
+        </div>
+      )}
       <header className="platform-admin-topbar"><div className="platform-breadcrumb"><span>Platform</span><b>/</b><strong>{tabs.find(([k])=>k===tab)?.[1]||'Overview'}</strong></div><div className="platform-top-actions"><div className="platform-global-search-wrap"><div className="platform-global-search"><Icon name="search" size={16}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search companies, users, payments…"/></div>{globalResults&&<GlobalSearchResults results={globalResults} onNavigate={(t)=>{setTab(t);setSearch('')}} onCompany={(id)=>{setTab('companies');setSearch('');api.get(`/auth/platform/companies/${id}/360/`).then(setCompany360).catch(e=>{setCompany360(null);setError(e.message||'Could not load the company 360 view.')})}}/>}</div><button className="platform-icon-action" title="Refresh" onClick={load}><Icon name="clock" size={17}/></button><button className="btn btn-primary admin-create-btn" onClick={()=>setShowCreate(true)}><Icon name="plus" size={16}/> Add company</button></div></header>
       <div className="platform-admin-content">
         <div className="page-header platform-page-header"><div><div className="eyebrow">SaaS command center</div><h1>{tab==='overview'?'Platform overview':tabs.find(([k])=>k===tab)?.[1]}</h1><p className="page-subtitle">Run HRCloudPay as a product: tenants, revenue, access, security, support and integrations.</p></div><div className="platform-live"><span></span> Live control plane</div></div>
