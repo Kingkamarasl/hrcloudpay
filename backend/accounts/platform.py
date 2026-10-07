@@ -915,6 +915,52 @@ class PlatformSystemHealthView(APIView):
             'chain_length': result['head_sequence'],
         }
 
+    @staticmethod
+    def _check_storage():
+        """Where uploaded files actually go, and whether that place survives.
+
+        Nothing else in this view could answer that. S3 support is complete and
+        switches on when AWS_STORAGE_BUCKET_NAME is set; with it unset every
+        upload lands in the container's MEDIA_ROOT, which a redeploy replaces
+        wholesale. Nothing errors, no upload fails, and the console reports
+        healthy right up until the contracts and national ID scans a tenant
+        uploaded are gone.
+
+        So the check is about the destination, not about whether writing works:
+        writing to local disk always works, and works perfectly, right up to
+        the rebuild.
+        """
+        from django.conf import settings
+        from django.core.files.storage import default_storage
+
+        backend = default_storage.__class__.__name__
+        bucket = getattr(settings, 'AWS_STORAGE_BUCKET_NAME', '')
+
+        if bucket:
+            return {
+                'key': 'storage', 'name': 'File storage', 'status': 'healthy',
+                'detail': f'Uploads are stored in the S3 bucket {bucket}, which '
+                          f'survives a redeploy.',
+                'backend': backend, 'bucket': bucket,
+            }
+
+        detail = (
+            'Uploads are stored on this container\'s local disk. Every employee '
+            'contract, document and ID scan is deleted by the next rebuild. Set '
+            'AWS_STORAGE_BUCKET_NAME (plus AWS_S3_REGION_NAME and the access '
+            'key) to move them to object storage.'
+        )
+        if settings.DEBUG:
+            return {
+                'key': 'storage', 'name': 'File storage', 'status': 'warning',
+                'detail': 'Local disk storage, which is expected in development.',
+                'backend': backend, 'bucket': None,
+            }
+        return {
+            'key': 'storage', 'name': 'File storage', 'status': 'critical',
+            'detail': detail, 'backend': backend, 'bucket': None,
+        }
+
     def get(self, request):
         from django.db import connection
         checks=[]
@@ -925,6 +971,7 @@ class PlatformSystemHealthView(APIView):
             checks.append({'key':'database','name':'Database','status':'healthy','detail':'Database connection is responding.'})
         except Exception as exc:
             checks.append({'key':'database','name':'Database','status':'critical','detail':str(exc)})
+        checks.append(self._check_storage())
         providers = PaymentProviderConfig.objects.filter(enabled=True)
         checks.append({'key':'payments','name':'Payment providers','status':'healthy' if providers.exists() else 'warning','detail':f'{providers.count()} provider(s) enabled.'})
         checks.append({'key':'webhooks','name':'Webhook processing','status':'healthy' if PaymentEvent.objects.filter(status='received').count() < 25 else 'warning','detail':f"{PaymentEvent.objects.filter(status='received').count()} unprocessed event(s)."})

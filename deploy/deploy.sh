@@ -14,6 +14,16 @@ cd "$(dirname "$0")/.."
 
 COMPOSE="docker compose -f docker-compose.prod.yml"
 
+# Where uploads will actually land, read from the environment this deploy is
+# about to use. Printed unconditionally below because the failure this guards
+# against is silent at every other moment: every upload succeeds, nothing
+# errors, and the files are deleted by the next rebuild.
+if [ -n "${AWS_STORAGE_BUCKET_NAME:-}" ]; then
+  STORAGE_NOTE="S3 bucket $AWS_STORAGE_BUCKET_NAME (durable)."
+else
+  STORAGE_NOTE="LOCAL DISK - NOT DURABLE."
+fi
+
 say() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
 fail() { printf '\n\033[31mFAILED: %s\033[0m\n' "$1" >&2; exit 1; }
 
@@ -85,6 +95,14 @@ echo "  test message. Do NOT set EMAIL_BACKEND: doing so replaces the"
 echo "  database-driven backend with one that reads settings this project does not"
 echo "  define, which leaves the server refusing its own connections with nothing"
 echo "  in any log to explain it."
+echo
+echo
+echo "  Uploaded documents: $STORAGE_NOTE"
+echo "  Employee contracts, national ID scans and payslip documents are written"
+echo "  to this container unless AWS_STORAGE_BUCKET_NAME is set. A rebuild"
+echo "  deletes everything under MEDIA_ROOT, so without a bucket those files"
+echo "  are gone after the next update - and nothing errors at upload time to"
+echo "  say so. Platform Admin -> System health reports this as CRITICAL."
 echo
 echo "  To activate one by hand, create a platform superuser:"
 echo "    $COMPOSE exec backend python manage.py createsuperuser"
