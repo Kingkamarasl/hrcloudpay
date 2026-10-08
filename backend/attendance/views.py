@@ -18,6 +18,104 @@ from .serializers import AttendanceSerializer
 TRACKED = ['date', 'check_in', 'check_out', 'crossed_midnight', 'status', 'notes']
 
 
+class AttendanceMonthGridView(APIView):
+    """One row per employee, one column per day, for a calendar view.
+
+    Distinct from `records/` because a grid is not a list of records and cannot
+    be assembled by paginating one. A month of records for a hundred employees
+    is three thousand rows; asking the client to stitch that into a grid would
+    move the work to the slowest part of the system and cap the month at whatever
+    the page size happened to be.
+
+    The query is one per employee for the whole month, not one per cell, so the
+    number of round trips is proportional to headcount rather than to
+    headcount x days.
+    """
+
+    permission_classes = [IsCompanyMember, IsCompanyActive]
+
+    def get(self, request):
+        from datetime import date as _date
+
+        from django.db.models import Q
+
+        from employees.models import Employee
+
+        from .grid import (
+            DEFAULT_EXPECTED_HOURS,
+            DEFAULT_GRACE_MINUTES,
+            STATUS_LABELS,
+            day_cells,
+            month_bounds,
+            summarise,
+        )
+
+        now = _date.today()
+        try:
+            year = int(request.query_params.get('year', now.year))
+            month = int(request.query_params.get('month', now.month))
+            start, end = month_bounds(year, month)
+        except (TypeError, ValueError):
+            return Response({'detail': 'year and month must be whole numbers.'},
+                            status=400)
+        if not 1 <= month <= 12:
+            return Response({'detail': 'month must be between 1 and 12.'},
+                            status=400)
+
+        try:
+            expected_hours = float(
+                request.query_params.get('expected_hours', DEFAULT_EXPECTED_HOURS))
+        except (TypeError, ValueError):
+            return Response({'detail': 'expected_hours must be a number.'},
+                            status=400)
+
+        company = request.user.company
+        employees = Employee.objects.filter(company=company)
+        department = request.query_params.get('department', '').strip()
+        if department:
+            employees = employees.filter(
+                Q(department__iexact=department) | Q(department_obj__name__iexact=department))
+        employee_id = request.query_params.get('employee', '').strip()
+        if employee_id:
+            employees = employees.filter(id=employee_id)
+
+        records = {}
+        for record in Attendance.objects.filter(
+                employee__company=company, date__range=(start, end)).select_related('employee'):
+            records.setdefault(record.employee_id, {})[record.date.isoformat()] = record
+
+        rows = []
+        for employee in employees.select_related('department_obj'):
+            cells = day_cells(
+                start, end, records.get(employee.id, {}),
+                expected_hours=expected_hours,
+                grace_minutes=DEFAULT_GRACE_MINUTES,
+            )
+            rows.append({
+                'employee': {
+                    'id': employee.id,
+                    'name': employee.full_name,
+                    'employee_code': employee.employee_code,
+                    'department': (employee.effective_department
+                                   if hasattr(employee, 'effective_department')
+                                   else employee.department),
+                    'job_title': employee.job_title,
+                },
+                'days': [cell.as_dict() for cell in cells],
+                'summary': summarise(cells),
+            })
+
+        return Response({
+            'year': year,
+            'month': month,
+            'start': start.isoformat(),
+            'end': end.isoformat(),
+            'expected_hours': expected_hours,
+            'status_labels': STATUS_LABELS,
+            'rows': rows,
+        })
+
+
 class AttendanceViewSet(viewsets.ModelViewSet):
     serializer_class = AttendanceSerializer
     permission_classes = [IsCompanyMember, IsCompanyActive, CanManageHROrDepartment]

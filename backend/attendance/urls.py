@@ -6,7 +6,12 @@ from .import_views import (
     AttendanceImportPreviewView,
     AttendanceImportTemplateView,
 )
-from .views import AttendanceViewSet, BulkMarkView, ClockView
+from .views import (
+    AttendanceMonthGridView,
+    AttendanceViewSet,
+    BulkMarkView,
+    ClockView,
+)
 
 router = DefaultRouter()
 router.register('records', AttendanceViewSet, basename='attendance')
@@ -15,6 +20,7 @@ urlpatterns = [
     # Under the router's own prefix, and listed first so they are matched before
     # `records/<pk>/` tries to read "clock" or "bulk" as a primary key.
     path('records/clock/', ClockView.as_view(), name='attendance-clock'),
+    path('month-grid/', AttendanceMonthGridView.as_view(), name='attendance-month-grid'),
     path('records/bulk/', BulkMarkView.as_view(), name='attendance-bulk-mark'),
     path('imports/preview/', AttendanceImportPreviewView.as_view(),
          name='attendance-import-preview'),
