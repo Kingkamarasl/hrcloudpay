@@ -4,7 +4,7 @@ import AppLayout from './components/AppLayout';
 import MarketingLayout from './components/MarketingLayout';
 import ProtectedRoute from './components/ProtectedRoute';
 const RoleRoute = ProtectedRoute;
-import { KNOWLEDGE_MANAGER_ROLES } from './constants/roles';
+import { KNOWLEDGE_MANAGER_ROLES, DRAFT_MANAGER_ROLES } from './constants/roles';
 import ErrorBoundary from './components/ErrorBoundary';
 import { FeatureProvider } from './context/FeatureContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -36,6 +36,7 @@ const Register = lazy(() => import('./pages/Register'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const Team = lazy(() => import('./pages/Team'));
 const PlatformAdmin = lazy(() => import('./pages/PlatformAdmin'));
+const AIDrafts = lazy(() => import('./pages/AIDrafts'));
 const AuditLogs = lazy(() => import('./pages/AuditLogs'));
 const Billing = lazy(() => import('./pages/Billing'));
 const CompanySettings = lazy(() => import('./pages/CompanySettings'));
@@ -99,7 +100,8 @@ export default function App() {
                       <Route path="/dashboard" element={<Dashboard />} />
                       <Route path="/security-center" element={<SecurityCenter />} />
                       <Route path="/ai" element={<AIAssistant />} />
-                      <Route path="/knowledge" element={<RoleRoute roles={KNOWLEDGE_MANAGER_ROLES}><KnowledgeCenter /></RoleRoute>} />
+                      <Route path="/ai-drafts" element={<RoleRoute roles={DRAFT_MANAGER_ROLES}><AIDrafts /></RoleRoute>} />
+                        <Route path="/knowledge" element={<RoleRoute roles={KNOWLEDGE_MANAGER_ROLES}><KnowledgeCenter /></RoleRoute>} />
                       <Route path="/employee-operations" element={<OperationsHub type="employee" />} />
                       <Route path="/payroll-operations" element={<OperationsHub type="payroll" />} />
                       <Route path="/workforce-operations" element={<OperationsHub type="leave" />} />

@@ -1,6 +1,6 @@
 import { NavLink, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { KNOWLEDGE_MANAGER_ROLES } from '../constants/roles';
+import { KNOWLEDGE_MANAGER_ROLES, DRAFT_MANAGER_ROLES } from '../constants/roles';
 import Icon from './Icon';
 
 interface NavLinkItem {
@@ -20,6 +20,7 @@ const GROUPS: NavGroup[] = [
   { title: 'Overview', links: [
     { to: '/dashboard', label: 'Dashboard', icon: 'grid', end: true },
     { to: '/ai', label: 'AI Copilot', icon: 'sparkles' },
+    { to: '/ai-drafts', label: 'Drafts for review', icon: 'file', roles: DRAFT_MANAGER_ROLES },
     { to: '/knowledge', label: 'Knowledge Center', icon: 'file', roles: KNOWLEDGE_MANAGER_ROLES },
   ] },
   { title: 'People', links: [

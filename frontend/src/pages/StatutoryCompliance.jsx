@@ -228,7 +228,7 @@ export default function StatutoryCompliance() {
   return (
     <div className="page-shell">
       <section className="page-header"><div><div className="eyebrow">STATUTORY COMPLIANCE</div><h1>Payroll filings & deadlines</h1><p>Country-aware filing calendar, payroll-period obligations and reviewable statutory exports.</p></div></section>
-      {error && <div className="alert error-alert">{error}</div>}
+      {error && <div className="alert alert-error">{error}</div>}
       {dashboard?.configured && (
         <section className="dash-grid">
           {[[dashboard.summary?.open_filings, 'Open filings'], [dashboard.summary?.overdue_filings, 'Overdue'], [dashboard.summary?.filed_filings, 'Filed'], [dashboard.summary?.mismatches, 'Reconciliation mismatches']].map(([v, l]) => (

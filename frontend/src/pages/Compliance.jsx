@@ -18,7 +18,7 @@ export default function Compliance(){
  const s=data?.summary||{};
  return <div className="page-shell">
   <section className="page-header"><div><div className="eyebrow">HR COMPLIANCE</div><h1>Documents & compliance</h1><p>Track required employee documents, expiry risk and contract deadlines from one place.</p></div><Link to="/employees" className="btn btn-secondary">Employee directory <Icon name="arrow" size={15}/></Link></section>
-  {error&&<div className="alert error-alert">{error}</div>}
+  {error&&<div className="alert alert-error">{error}</div>}
   <div className="dash-stats">
    <div className="dash-stat"><div className="stat-icon"><Icon name="shield"/></div><div className="stat-copy"><span>Average compliance</span><strong>{s.average_score??0}%</strong><small>{s.compliant??0} fully compliant</small></div></div>
    <div className="dash-stat"><div className="stat-icon"><Icon name="users"/></div><div className="stat-copy"><span>Needs attention</span><strong>{s.needs_attention??0}</strong><small>employees below 100%</small></div></div>
