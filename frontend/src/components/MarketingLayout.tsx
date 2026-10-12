@@ -69,6 +69,16 @@ export default function MarketingLayout() {
             <Link to="/login">Log in</Link>
             <Link to="/register">Create account</Link>
           </div>
+          <div className="ledger-footer-col">
+            {/* Required for marketplace and payment-processor verification,
+                which follows the links rather than checking the routes exist.
+                Kept in the footer on every marketing page rather than buried on
+                the login screen, where a reviewer would not find them. */}
+            <strong>Legal</strong>
+            <Link to="/terms">Terms of service</Link>
+            <Link to="/privacy">Privacy policy</Link>
+            <Link to="/refund-policy">Refund policy</Link>
+          </div>
         </div>
         <div className="ledger-footer-bottom">© {new Date().getFullYear()} HRCloudPay. All rights reserved.</div>
       </footer>

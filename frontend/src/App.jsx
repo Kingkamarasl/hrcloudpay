@@ -47,6 +47,7 @@ const Workflows = lazy(() => import('./pages/Workflows'));
 const RegionalOnboarding = lazy(() => import('./pages/RegionalOnboarding'));
 const RequestTracking = lazy(() => import('./pages/RequestTracking'));
 const Security = lazy(() => import('./pages/Security'));
+const LegalPage = lazy(() => import('./pages/LegalPage'));
 const AIAssistant = lazy(() => import('./pages/AIAssistant'));
 const KnowledgeCenter = lazy(() => import('./pages/KnowledgeCenter'));
 const OperationsHub = lazy(() => import('./pages/OperationsHub'));
@@ -80,6 +81,9 @@ export default function App() {
                       <Route path="/about" element={<About />} />
                       <Route path="/pricing" element={<Pricing />} />
                       <Route path="/security" element={<Security />} />
+          <Route path="/terms" element={<LegalPage slug="terms" />} />
+          <Route path="/privacy" element={<LegalPage slug="privacy" />} />
+          <Route path="/refund-policy" element={<LegalPage slug="refund-policy" />} />
                     </Route>
 
                     <Route path="/login" element={<Login />} />

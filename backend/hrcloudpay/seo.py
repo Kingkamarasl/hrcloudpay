@@ -135,6 +135,51 @@ PUBLIC_PAGES: tuple[PublicPage, ...] = (
         priority='0.6',
         changefreq='monthly',
     ),
+    # The three legal pages. Markers and marketplaces will not verify a
+    # listing without them, and a reviewer follows the link rather than trusting
+    # the existence of the route - so they are in PUBLIC_PAGES and therefore in
+    # sitemap.xml with their own titles and descriptions, not bare SPA routes
+    # shipping the homepage's metadata.
+    #
+    # Low priority and yearly: they change when the law does, not when the
+    # product does, and listing them alongside product pages would overstate
+    # how often they are worth recrawling.
+    PublicPage(
+        path='/terms',
+        slug='terms',
+        title='Terms of Service - HRCloudPay',
+        description=(
+            'The terms governing use of HRCloudPay: what you are licensing, '
+            'acceptable use, your responsibilities as a customer, disclaimers and '
+            'limitation of liability.'
+        ),
+        priority='0.3',
+        changefreq='yearly',
+    ),
+    PublicPage(
+        path='/privacy',
+        slug='privacy',
+        title='Privacy Policy - HRCloudPay',
+        description=(
+            'How HRCloudPay handles personal data: what is processed on your '
+            'behalf, what we hold as controller, how the AI assistant sends data to '
+            'a model provider, and your rights.'
+        ),
+        priority='0.3',
+        changefreq='yearly',
+    ),
+    PublicPage(
+        path='/refund-policy',
+        slug='refund-policy',
+        title='Refund Policy - HRCloudPay',
+        description=(
+            'When a purchase can be refunded and how to request one, including '
+            'duplicate charges, software that does not do what its listing states, '
+            'and subscription renewals.'
+        ),
+        priority='0.3',
+        changefreq='yearly',
+    ),
 )
 
 PAGES_BY_PATH = {page.path: page for page in PUBLIC_PAGES}

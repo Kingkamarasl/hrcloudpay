@@ -52,6 +52,12 @@ class RouteResolutionTests(TestCase):
             '/': 'home', '/platform': 'platform', '/payroll-product': 'payroll-product',
             '/hr': 'hr', '/about': 'about', '/pricing': 'pricing',
             '/security': 'security',
+            # Required for marketplace and payment-processor verification. Same
+            # contract as the rest: the slug must be one LegalPage actually asks
+            # useMarketingPage() for, or the public endpoint 404s and the SEO
+            # console offers to edit metadata nothing will ever serve.
+            '/terms': 'terms', '/privacy': 'privacy',
+            '/refund-policy': 'refund-policy',
         }
         self.assertEqual({p.path: p.slug for p in seo.PUBLIC_PAGES}, expected)
 
