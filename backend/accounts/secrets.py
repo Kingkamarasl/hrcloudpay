@@ -16,6 +16,42 @@ def encrypt_secret(value):
     if not value: return ''
     return _fernet(_keys()[0]).encrypt(value.encode()).decode()
 
+def clean_secret(value):
+    """Normalise a pasted credential before it is encrypted or sent.
+
+    Both payment providers were failing on secrets that were correct apart from
+    the whitespace around them. The key is typed into a password field by a
+    person copying it out of a dashboard or a .env file, and browsers submit
+    whatever was pasted - including the trailing newline, and on Windows the
+    carriage return with it. Nothing stripped it: encrypt_secret stored it
+    byte-for-byte and decrypt_secret returned it byte-for-byte, so a single
+    stray newline travelled all the way into the HTTP header.
+
+    Paddle rejects that with `authentication_malformed` - "Authentication
+    header included, but incorrectly formatted" - which is an accurate and
+    completely unhelpful error, because the credential was not malformed, only
+    wrapped in a newline.
+
+    Two things are removed:
+
+      * surrounding whitespace, including the \\r\\n a Windows paste carries
+      * a duplicated `Bearer ` prefix, which arrives when someone copies the
+        whole header rather than the token. Without this the request sends
+        `Bearer Bearer pdl_...`, which fails the same way.
+
+    Applied at the request as well as on save: a secret pasted before this
+    existed is already in the database with its newline attached, and trimming
+    only on the way in would make the operator re-enter a credential they
+    already had right.
+    """
+    if not value: return ''
+    cleaned=str(value).strip()
+    for scheme in ('Bearer ', 'bearer ', 'BEARER '):
+        if cleaned.startswith(scheme):
+            cleaned=cleaned[len(scheme):].strip()
+            break
+    return cleaned
+
 def decrypt_secret(value):
     if not value: return ''
     for key in _keys():

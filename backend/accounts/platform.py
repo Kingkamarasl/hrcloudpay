@@ -36,7 +36,7 @@ from .marketing_schema import (
 from .serializers import PlatformCompanyCreateSerializer, PlatformCompanySerializer, PlatformUserSerializer
 from .billing import PLAN_LABELS, PLAN_PRICES, PLAN_USER_LIMITS, subscription_state, start_trial
 from .permissions import IsOwnerOrAdminOnly
-from .secrets import encrypt_secret, decrypt_secret
+from .secrets import encrypt_secret, decrypt_secret, clean_secret
 
 
 
@@ -478,9 +478,9 @@ class PlatformPaymentProvidersView(APIView):
         for f in ('enabled','environment','public_key'):
             if f in request.data: setattr(obj,f,request.data[f])
         if 'secret_key' in request.data and request.data['secret_key']:
-            obj.encrypted_secret_key=encrypt_secret(request.data['secret_key'])
+            obj.encrypted_secret_key=encrypt_secret(clean_secret(request.data['secret_key']))
         if 'webhook_secret' in request.data and request.data['webhook_secret']:
-            obj.webhook_secret=encrypt_secret(request.data['webhook_secret'])
+            obj.webhook_secret=encrypt_secret(clean_secret(request.data['webhook_secret']))
         if request.data.get('enabled') and not obj.encrypted_secret_key: return Response({'detail':'A secret/API key is required before enabling this provider.'},status=400)
         obj.configured_at=timezone.now(); obj.save()
         audit(request.user,'security',f"Updated {obj.get_provider_display()} payment provider settings",None,'payment_provider',obj.id,{'enabled':obj.enabled,'environment':obj.environment})

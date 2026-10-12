@@ -11,14 +11,14 @@ from django.conf import settings
 
 from .billing import PLAN_PRICES
 from .platform_models import PaymentProviderConfig, PaymentPlan, PaymentTransaction, Subscription, BillingInvoice
-from .secrets import decrypt_secret
+from .secrets import decrypt_secret, clean_secret
 
 FLW_BASE = 'https://api.flutterwave.com/v3'
 
 
 def _request(path, method='GET', payload=None, secret=''):
     data = None
-    headers = {'Authorization': f'Bearer {secret}', 'Content-Type': 'application/json'}
+    headers = {'Authorization': f'Bearer {clean_secret(secret)}', 'Content-Type': 'application/json'}
     if payload is not None:
         data = json.dumps(payload).encode()
     req = urllib.request.Request(f'{FLW_BASE}{path}', data=data, headers=headers, method=method)
@@ -191,12 +191,57 @@ def paddle_provider_config():
     config = PaymentProviderConfig.objects.filter(provider='paddle', enabled=True).first()
     if not config or not config.encrypted_secret_key:
         raise RuntimeError('Paddle is not enabled or configured by the platform administrator.')
-    return config, decrypt_secret(config.encrypted_secret_key), PADDLE_API_BASE.get(config.environment or 'test', PADDLE_API_BASE['test'])
+    secret = clean_secret(decrypt_secret(config.encrypted_secret_key))
+    environment = config.environment or 'test'
+
+    # Paddle answers a header it cannot parse with `authentication_malformed`
+    # and nothing else - per their error reference it means only that "an
+    # Authorization header was sent, but it isn't in a valid format", with no
+    # indication which character offended it. Checking the shape here turns an
+    # opaque 403 into a sentence naming the problem, for the cost of two string
+    # tests made before the request rather than after a failure.
+    #
+    # Only the first twelve characters are echoed back. The prefix is the part
+    # that identifies the credential and the part needed to tell these cases
+    # apart; the rest is a secret and must not reach a log or a response body.
+    if not secret.startswith('pdl_'):
+        raise RuntimeError(
+            'The stored Paddle API key does not look like a Paddle API key: it '
+            'starts "%s". A Paddle API key begins "pdl_sdbx_apikey_" (sandbox) '
+            'or "pdl_live_apikey_" (live). Use the API key from Paddle > '
+            'Developer tools > Authentication - not the client-side token, which '
+            'starts "ctkn_", and not the webhook secret.'
+            % (secret[:12] if secret else '(empty)'))
+
+    # Sandbox and live are entirely separate accounts with separate keys, and a
+    # key used against the wrong base URL is rejected. The environment is chosen
+    # in a dropdown next to the key, so the two drift apart easily and the
+    # resulting error names neither of them.
+    if environment == 'test' and 'live' in secret:
+        raise RuntimeError(
+            'The stored Paddle API key is a live key ("%s...") but this '
+            'provider is configured for the sandbox environment. Live keys only '
+            'work against %s. Either switch the environment to "live" or store '
+            'the sandbox key from the Paddle sandbox dashboard.'
+            % (secret[:12], PADDLE_API_BASE['live']))
+    if environment == 'live' and 'sdbx' in secret:
+        raise RuntimeError(
+            'The stored Paddle API key is a sandbox key ("%s...") but this '
+            'provider is configured for the live environment. Sandbox keys only '
+            'work against %s. Either switch the environment to "test" or store '
+            'the live key from your live Paddle dashboard.'
+            % (secret[:12], PADDLE_API_BASE['test']))
+
+    return config, secret, PADDLE_API_BASE.get(environment, PADDLE_API_BASE['test'])
 
 
 def _paddle_request(path, method='GET', payload=None, secret='', base_url=''):
     data = None
-    headers = {'Authorization': f'Bearer {secret}', 'Content-Type': 'application/json'}
+    # Trimmed again here, not only on save. Secrets pasted before clean_secret
+    # existed are already stored with their trailing newline attached, and this
+    # is what lets those credentials start working on the next deploy instead
+    # of requiring the operator to re-enter one they had already got right.
+    headers = {'Authorization': f'Bearer {clean_secret(secret)}', 'Content-Type': 'application/json'}
     if payload is not None:
         data = json.dumps(payload).encode()
     request = urllib.request.Request(f'{base_url}{path}', data=data, headers=headers, method=method)
