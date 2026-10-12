@@ -430,7 +430,12 @@ class PlatformBillingPlansView(APIView):
 
     def put(self, request):
         """Update plan configuration."""
-        plan_id = request.data.get('plan')
+        # The GET above serialises the model's `plan` column as `id`, so the object
+        # this endpoint hands back is already keyed `id` - and posting it straight
+        # back failed with "plan is required", because only `plan` was read here.
+        # That made every plan edit from the platform admin fail while the form
+        # looked correct. Accept either name; `id` is what the UI actually sends.
+        plan_id = request.data.get('plan') or request.data.get('id')
         if not plan_id:
             return Response({'detail': 'plan is required'}, status=400)
         plan = BillingPlan.objects.filter(plan=plan_id).first()

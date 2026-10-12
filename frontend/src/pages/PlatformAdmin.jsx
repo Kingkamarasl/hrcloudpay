@@ -151,33 +151,44 @@ function SeoEditor({onError}){
   </div>;
 }
 
-function Plans({plans,onSave,onEdit}){
-  const [editing,setEditing]=useState(null);
+function Plans({plans,onSave}){
+  // This held an edit in the PARENT via onEdit, and the parent never read it:
+  // `planEdit` was assigned and passed down and nothing consumed it. The inputs
+  // stayed bound to `p`, the object from the last load, so they were controlled
+  // inputs whose value could never change - typing did nothing at all, which is
+  // why the tab looked inert. Save then posted the original `p` rather than the
+  // edit, so even a working keystroke would have saved nothing.
+  //
+  // The draft lives here, next to the inputs that read it.
+  const [draft,setDraft]=useState(null);
+  const set=(field,value)=>setDraft(d=>({...d,[field]:value}));
   return <div className="control-grid">
-    {plans.map(p=> <div className="card" key={p.id}>
-      <div className="section-head"><div><div className="eyebrow">Plan config</div><h2>{p.name} <small>({p.id})</small></h2><p>Price, limits and feature flags for the {p.name} plan.</p></div><span className={`admin-status ${p.active?'active':'pending'}`}>{p.active?'Active':'Inactive'}</span></div>
-      {editing===p.id ? (
-        <div className="plan-edit-form">
-          <div className="form-row"><div><label>Name</label><input value={p.name} onChange={e=>{const np={...p,name:e.target.value};setEditing(np);onEdit(np);}}/></div><div><label>Monthly price</label><input type="number" min="0" step="0.01" value={p.monthly_price} onChange={e=>{const np={...p,monthly_price:Number(e.target.value)};setEditing(np);onEdit(np);}}/></div></div>
-          <div className="form-row"><div><label>Annual price</label><input type="number" min="0" step="0.01" value={p.annual_price} onChange={e=>{const np={...p,annual_price:Number(e.target.value)};setEditing(np);onEdit(np);}}/></div><div><label>Order</label><input type="number" min="0" value={p.order} onChange={e=>{const np={...p,order:Number(e.target.value)};setEditing(np);onEdit(np);}}/></div></div>
-          <div className="form-row"><div><label>Employee limit</label><input type="number" min="0" value={p.employee_limit??''} onChange={e=>{const v=e.target.value?Number(e.target.value):null;const np={...p,employee_limit:v};setEditing(np);onEdit(np);}}/></div><div><label>User limit</label><input type="number" min="0" value={p.user_limit??''} onChange={e=>{const v=e.target.value?Number(e.target.value):null;const np={...p,user_limit:v};setEditing(np);onEdit(np);}}/></div></div>
-          <div className="form-row"><div><label className="checkbox-label"><input type="checkbox" checked={p.ai_enabled} onChange={e=>{const np={...p,ai_enabled:e.target.checked};setEditing(np);onEdit(np);}}/><strong>AI enabled</strong> (Professional+ only)</label></div><div><label className="checkbox-label"><input type="checkbox" checked={p.highlight} onChange={e=>{const np={...p,highlight:e.target.checked};setEditing(np);onEdit(np);}}/><strong>Highlight in UI</strong></label></div><div><label className="checkbox-label"><input type="checkbox" checked={p.active} onChange={e=>{const np={...p,active:e.target.checked};setEditing(np);onEdit(np);}}/><strong>Active</strong></label></div></div>
-          <div className="modal-actions"><button className="btn btn-secondary" onClick={()=>setEditing(null)}>Cancel</button><button className="btn btn-primary" onClick={()=>{onSave(p);setEditing(null)}}>Save</button></div>
-        </div>
-      ) : (
-        <div className="plan-view">
-          <div className="plan-meta"><div><strong>Monthly:</strong> {p.monthly_price} | <strong>Annual:</strong> {p.annual_price}</div><div><strong>Employees:</strong> {p.employee_limit!==null?p.employee_limit:'Unlimited'} | <strong>Users:</strong> {p.user_limit!==null?p.user_limit:'Unlimited'}</div><div><strong>AI:</strong> {p.ai_enabled?'Enabled':'Disabled'} | <strong>Highlight:</strong> {p.highlight?'Yes':'No'} | <strong>Active:</strong> {p.active?'Yes':'No'} | <strong>Order:</strong> {p.order}</div></div>
-          <div className="modal-actions"><button className="btn btn-primary" onClick={()=>setEditing(p)}>Edit plan</button></div>
-        </div>
-      )}
-    </div>)}
+    {plans.map(p=>{
+      const isEditing=draft&&draft.id===p.id;
+      const d=isEditing?draft:p;
+      const num=e=>{const v=e.target.value;return v===''?null:Number(v)};
+      return <div className="card" key={p.id}>
+        <div className="section-head"><div><div className="eyebrow">Plan config</div><h2>{p.name} <small>({p.id})</small></h2><p>Price, limits and feature flags for the {p.name} plan.</p></div><span className={`admin-status ${p.active?'active':'pending'}`}>{p.active?'Active':'Inactive'}</span></div>
+        {isEditing ? (
+          <div className="plan-edit-form">
+            <div className="form-row"><div><label>Name</label><input value={d.name} onChange={e=>set('name',e.target.value)}/></div><div><label>Monthly price</label><input type="number" min="0" step="0.01" value={d.monthly_price} onChange={e=>set('monthly_price',e.target.value)}/></div></div>
+            <div className="form-row"><div><label>Annual price</label><input type="number" min="0" step="0.01" value={d.annual_price} onChange={e=>set('annual_price',e.target.value)}/></div><div><label>Order</label><input type="number" min="0" value={d.order} onChange={e=>set('order',num(e))}/></div></div>
+            <div className="form-row"><div><label>Employee limit</label><input type="number" min="0" value={d.employee_limit??''} onChange={e=>set('employee_limit',num(e))}/></div><div><label>User limit</label><input type="number" min="0" value={d.user_limit??''} onChange={e=>set('user_limit',num(e))}/></div></div>
+            <div className="form-row"><div><label className="checkbox-label"><input type="checkbox" checked={!!d.ai_enabled} onChange={e=>set('ai_enabled',e.target.checked)}/><strong>AI enabled</strong></label></div><div><label className="checkbox-label"><input type="checkbox" checked={!!d.highlight} onChange={e=>set('highlight',e.target.checked)}/><strong>Highlight in UI</strong></label></div><div><label className="checkbox-label"><input type="checkbox" checked={!!d.active} onChange={e=>set('active',e.target.checked)}/><strong>Active</strong></label></div></div>
+            <div className="modal-actions"><button className="btn btn-secondary" onClick={()=>setDraft(null)}>Cancel</button><button className="btn btn-primary" onClick={()=>{onSave({...d,plan:d.id});setDraft(null)}}>Save</button></div>
+          </div>
+        ) : (
+          <div className="plan-view">
+            <div className="plan-meta"><div><strong>Monthly:</strong> {p.monthly_price} | <strong>Annual:</strong> {p.annual_price}</div><div><strong>Employees:</strong> {p.employee_limit!==null?p.employee_limit:'Unlimited'} | <strong>Users:</strong> {p.user_limit!==null?p.user_limit:'Unlimited'}</div><div><strong>AI:</strong> {p.ai_enabled?'Enabled':'Disabled'} | <strong>Highlight:</strong> {p.highlight?'Yes':'No'} | <strong>Active:</strong> {p.active?'Yes':'No'} | <strong>Order:</strong> {p.order}</div></div>
+            <div className="modal-actions"><button className="btn btn-primary" onClick={()=>setDraft({...p})}>Edit plan</button></div>
+          </div>
+        )}
+      </div>})}
   </div>
 }
-
 export default function PlatformAdmin(){
   const [tab,setTab]=useState('overview'); const [dashboard,setDashboard]=useState(null); const [data,setData]=useState({companies:[],users:[],subscriptions:[],usage:[],onboarding:[],support:[],notifications:[],audit:[],analytics:null,providers:[],transactions:[],security:null,health:null,flags:[],marketingPages:[],branding:null,plans:[]});
   const [search,setSearch]=useState(''); const [globalResults,setGlobalResults]=useState(null); const [company360,setCompany360]=useState(null); const [busy,setBusy]=useState(false); const [error,setError]=useState(''); const [message,setMessage]=useState(''); const [showCreate,setShowCreate]=useState(false); const [form,setForm]=useState(EMPTY); const [suspend,setSuspend]=useState(null); const [selectedCompany,setSelectedCompany]=useState(null); const [noticeForm,setNoticeForm]=useState({title:'',message:'',level:'info',company_id:''}); const [ticketForm,setTicketForm]=useState({company_id:'',subject:'',description:'',priority:'normal'}); const [deleteTarget,setDeleteTarget]=useState(null);
-  const [planEdit,setPlanEdit]=useState(null);
 
   async function load(){setBusy(true); setError(''); try{
     const [d,c,u,s,usage,onboard,support,notifications,audit,analytics,providers,transactions,security,health,flags,marketingPages,aiConfig,branding,plans,emailConfig]=await Promise.all([
@@ -267,7 +278,7 @@ export default function PlatformAdmin(){
         {tab==='email'&&<EmailSettings config={data.emailConfig} onSave={async(payload)=>{try{const r=await api.post('/auth/platform/email-config/',payload);setData({...data,emailConfig:r});notify(r.in_use?'Email settings saved and now in use.':'Email settings saved. Not active yet.');}catch(e){setError(e.message||'Could not save email settings')}}} onTest={async(to)=>{try{const r=await api.post('/auth/platform/email-config/test/',to?{to}:{});notify(r.detail||'Test message sent.');}catch(e){setError(e.message||'Test send failed')}}}/>} 
         {tab==='integrations'&&<Integrations items={data.providers} onSave={async (payload)=>{try{await api.post('/auth/platform/payment-providers/',payload);await load();notify(`${payload.provider} payment settings saved.`)}catch(e){setError(e.message||'Could not save provider settings')}}} onToggle={async (provider,enabled)=>{try{await api.post(`/auth/platform/payment-providers/${provider}/toggle/`,{enabled});await load();notify(`${provider} ${enabled?'enabled':'disabled'}.`)}catch(e){setError(e.message||'Could not change provider state')}}}/>}
         {tab==='users'&&<Users items={filteredUsers} search={search} setSearch={setSearch} onDelete={setDeleteTarget} onToggle={(u)=>action(`/auth/platform/users/${u.id}/`,{is_active:!u.is_active},`${u.username} is now ${u.is_active?'inactive':'active'}.`,'patch')}/>} 
-      {tab==='plans'&&<Plans plans={data.plans} onSave={handlePlanSave} onEdit={setPlanEdit}/>} 
+      {tab==='plans'&&<Plans plans={data.plans} onSave={handlePlanSave}/>} 
       </div>
     </main>
 
@@ -472,46 +483,83 @@ function AISettings({config,onSave,onTest}){
     <div className="card"><div className="section-head"><div><h2>Security</h2><p>How HRCloudPay handles the AI provider configuration.</p></div></div><div className="drawer-mini-list"><div><strong>API key</strong><small>Encrypted at rest with the Django SECRET_KEY. Never returned to the frontend.</small></div><div><strong>Access</strong><small>Only platform superusers can view or change these settings.</small></div><div><strong>Tenant isolation</strong><small>Company users cannot change the provider, model, endpoint, or credentials.</small></div><div><strong>Audit</strong><small>Configuration changes and connection tests are recorded in the platform audit log.</small></div></div></div>
   </div>
 }
-
-function EmailSettings({config,onSave,onTest}){
-  const [form,setForm]=useState(null);
-  const [to,setTo]=useState('');
-  useEffect(()=>{if(config)setForm({...config,password:''})},[config]);
-  if(!form)return <div className="card page-loading">Loading email configuration...</div>;
-  const set=(key,value)=>setForm({...form,[key]:value});
-  // smtplib cannot negotiate STARTTLS on a socket that is already TLS, so the
-  // two are exclusive. Enforced here rather than only on the server so the admin
-  // is not offered a combination that is guaranteed to fail.
-  const setTls=(on)=>setForm({...form,use_tls:on,use_ssl:on?false:form.use_ssl});
-  const setSsl=(on)=>setForm({...form,use_ssl:on,use_tls:on?false:form.use_tls});
+
+
+function EmailSettings({config,onSave,onTest}){
+
+  const [form,setForm]=useState(null);
+
+  const [to,setTo]=useState('');
+
+  useEffect(()=>{if(config)setForm({...config,password:''})},[config]);
+
+  if(!form)return <div className="card page-loading">Loading email configuration...</div>;
+
+  const set=(key,value)=>setForm({...form,[key]:value});
+
+  // smtplib cannot negotiate STARTTLS on a socket that is already TLS, so the
+
+  // two are exclusive. Enforced here rather than only on the server so the admin
+
+  // is not offered a combination that is guaranteed to fail.
+
+  const setTls=(on)=>setForm({...form,use_tls:on,use_ssl:on?false:form.use_ssl});
+
+  const setSsl=(on)=>setForm({...form,use_ssl:on,use_tls:on?false:form.use_tls});
+
   // `.admin-status` only defines active / pending / danger. Using a class it does
   // not have would render an unstyled pill, so an unconfigured server borrows
   // `danger` - it is the state that needs acting on.
-  const status=form.in_use?'active':form.configured?'pending':'danger';
-  const statusLabel=form.in_use?'In use':form.configured?'Saved, not active':'Not configured';
-  return <div className="control-grid">
-    <div className="card">
-      <div className="section-head"><div><div className="eyebrow">Platform email</div><h2>SMTP configuration</h2><p>HRCloudPay sends activation links, password resets and invitations through this server. Until it is active, mail is printed to the application log instead of being delivered.</p></div><span className={`admin-status ${status}`}>{statusLabel}</span></div>
-      <div className="form-row"><div><label>SMTP host</label><input value={form.host||''} onChange={e=>set('host',e.target.value)} placeholder="smtp.yourprovider.com"/></div><div><label>Port</label><input type="number" min="1" max="65535" value={form.port??587} onChange={e=>set('port',Number(e.target.value))}/></div></div>
-      <div className="form-row"><div><label>Username</label><input value={form.username||''} onChange={e=>set('username',e.target.value)} autoComplete="off"/></div><div><label>Password</label><input type="password" value={form.password||''} onChange={e=>set('password',e.target.value)} placeholder={form.password_set?'Leave blank to keep current password':'SMTP password or app password'} autoComplete="new-password"/></div></div>
-      <div className="form-row"><div><label>From address</label><input type="email" value={form.from_email||''} onChange={e=>set('from_email',e.target.value)} placeholder="no-reply@hrcloudpay.com"/></div><div><label>Timeout (seconds)</label><input type="number" min="1" max="300" value={form.timeout_seconds??30} onChange={e=>set('timeout_seconds',Number(e.target.value))}/></div></div>
-      <div className="form-row"><div><label className="checkbox-label"><input type="checkbox" checked={Boolean(form.use_tls)} onChange={e=>setTls(e.target.checked)}/> Use STARTTLS (usually port 587)</label></div><div><label className="checkbox-label"><input type="checkbox" checked={Boolean(form.use_ssl)} onChange={e=>setSsl(e.target.checked)}/> Use SSL / implicit TLS (usually port 465)</label></div></div>
-      <label className="checkbox-label"><input type="checkbox" checked={Boolean(form.is_active)} onChange={e=>set('is_active',e.target.checked)}/> Use these settings for sending</label>
-      <div className="modal-actions"><button className="btn btn-secondary" onClick={()=>onTest(to.trim()||undefined)} disabled={!form.in_use}>Send test message</button><button className="btn btn-primary" onClick={()=>onSave(form)}>Save email settings</button></div>
-      <label>Send a test to</label><input type="email" value={to} onChange={e=>setTo(e.target.value)} placeholder="Defaults to your own account email"/>
-    </div>
-    <div className="card">
-      <div className="section-head"><div><h2>Before you activate</h2><p>Two things to check, in this order.</p></div></div>
-      <div className="drawer-mini-list">
-        <div><strong>1. Save, then send a test</strong><small>A test button only works once the settings are saved and active. A wrong password found here costs nothing; found later it means a customer cannot activate their account.</small></div>
-        <div><strong>2. Check the from address</strong><small>Many providers reject a message whose From address they cannot verify, and the rejection looks like a send that succeeded.</small></div>
-        <div><strong>Encrypted at rest</strong><small>The SMTP password is encrypted with the same key used for payment provider secrets. It is never sent to the browser, and the audit log records only that it changed.</small></div>
-        <div><strong>Access</strong><small>Only platform superusers can read or change these settings. Company users cannot see them.</small></div>
-        <div><strong>Audit</strong><small>Saving settings and sending a test are both recorded in the platform audit log.</small></div>
-      </div>
-    </div>
-  </div>;
-}
+  const status=form.in_use?'active':form.configured?'pending':'danger';
+
+  const statusLabel=form.in_use?'In use':form.configured?'Saved, not active':'Not configured';
+
+  return <div className="control-grid">
+
+    <div className="card">
+
+      <div className="section-head"><div><div className="eyebrow">Platform email</div><h2>SMTP configuration</h2><p>HRCloudPay sends activation links, password resets and invitations through this server. Until it is active, mail is printed to the application log instead of being delivered.</p></div><span className={`admin-status ${status}`}>{statusLabel}</span></div>
+
+      <div className="form-row"><div><label>SMTP host</label><input value={form.host||''} onChange={e=>set('host',e.target.value)} placeholder="smtp.yourprovider.com"/></div><div><label>Port</label><input type="number" min="1" max="65535" value={form.port??587} onChange={e=>set('port',Number(e.target.value))}/></div></div>
+
+      <div className="form-row"><div><label>Username</label><input value={form.username||''} onChange={e=>set('username',e.target.value)} autoComplete="off"/></div><div><label>Password</label><input type="password" value={form.password||''} onChange={e=>set('password',e.target.value)} placeholder={form.password_set?'Leave blank to keep current password':'SMTP password or app password'} autoComplete="new-password"/></div></div>
+
+      <div className="form-row"><div><label>From address</label><input type="email" value={form.from_email||''} onChange={e=>set('from_email',e.target.value)} placeholder="no-reply@hrcloudpay.com"/></div><div><label>Timeout (seconds)</label><input type="number" min="1" max="300" value={form.timeout_seconds??30} onChange={e=>set('timeout_seconds',Number(e.target.value))}/></div></div>
+
+      <div className="form-row"><div><label className="checkbox-label"><input type="checkbox" checked={Boolean(form.use_tls)} onChange={e=>setTls(e.target.checked)}/> Use STARTTLS (usually port 587)</label></div><div><label className="checkbox-label"><input type="checkbox" checked={Boolean(form.use_ssl)} onChange={e=>setSsl(e.target.checked)}/> Use SSL / implicit TLS (usually port 465)</label></div></div>
+
+      <label className="checkbox-label"><input type="checkbox" checked={Boolean(form.is_active)} onChange={e=>set('is_active',e.target.checked)}/> Use these settings for sending</label>
+
+      <div className="modal-actions"><button className="btn btn-secondary" onClick={()=>onTest(to.trim()||undefined)} disabled={!form.in_use}>Send test message</button><button className="btn btn-primary" onClick={()=>onSave(form)}>Save email settings</button></div>
+
+      <label>Send a test to</label><input type="email" value={to} onChange={e=>setTo(e.target.value)} placeholder="Defaults to your own account email"/>
+
+    </div>
+
+    <div className="card">
+
+      <div className="section-head"><div><h2>Before you activate</h2><p>Two things to check, in this order.</p></div></div>
+
+      <div className="drawer-mini-list">
+
+        <div><strong>1. Save, then send a test</strong><small>A test button only works once the settings are saved and active. A wrong password found here costs nothing; found later it means a customer cannot activate their account.</small></div>
+
+        <div><strong>2. Check the from address</strong><small>Many providers reject a message whose From address they cannot verify, and the rejection looks like a send that succeeded.</small></div>
+
+        <div><strong>Encrypted at rest</strong><small>The SMTP password is encrypted with the same key used for payment provider secrets. It is never sent to the browser, and the audit log records only that it changed.</small></div>
+
+        <div><strong>Access</strong><small>Only platform superusers can read or change these settings. Company users cannot see them.</small></div>
+
+        <div><strong>Audit</strong><small>Saving settings and sending a test are both recorded in the platform audit log.</small></div>
+
+      </div>
+
+    </div>
+
+  </div>;
+
+}
+
 
 function Integrations({items,onSave,onToggle}){
   const [draft,setDraft]=useState({});
