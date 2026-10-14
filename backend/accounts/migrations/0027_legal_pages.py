@@ -302,13 +302,13 @@ PRIVACY = {
                     'body': (
                         'Passwords are stored as one-way hashes, not readable. '
                         'Sessions can be revoked centrally and all sessions are '
-                        'terminated on a password reset. Privileged actions and AI '
-                        'draft reviews are written to an append-only audit log that '
-                        'is hash-chained, so a deleted entry is detectable. Optional '
-                        'controls include two-factor authentication, IP allow-listing, '
-                        'API tokens and single sign-on where configured. No system is '
-                        'perfect; report a suspected vulnerability to us rather than '
-                        'disclosing it publicly.'
+                        'terminated on a password reset. Two-factor authentication '
+                        'can be enrolled per account, and API tokens can be issued '
+                        'for integrations and revoked centrally. Privileged actions '
+                        'and AI draft reviews are written to an append-only audit '
+                        'log that is hash-chained, so a deleted entry is '
+                        'detectable. No system is perfect; report a suspected '
+                        'vulnerability to us rather than disclosing it publicly.'
                     ),
                 },
                 {
