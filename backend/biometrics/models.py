@@ -1,0 +1,193 @@
+"""Biometric attendance ingestion.
+
+A biometric device - fingerprint reader, face terminal, or iris scanner - is the
+source of truth for "this person was at this place at this time". HRCloudPay
+does not store biometric templates; the template lives on the device, and the
+server only records that an employee is enrolled on it and the punches it
+produces. That keeps the most sensitive data off the database and off any backup.
+
+The ingestion path is deliberately device-agnostic. Biometric hardware speaks
+dozens of proprietary protocols, and shipping a driver for each would mean
+maintaining firmware-adjacent code we cannot test. Instead, every device that
+can POST JSON (or that an operator can convert from CSV) talks to the same
+endpoint with the same shape, and a device registry records which ones are
+trusted. A buyer with a ZKTeco terminal and a buyer with a Hikvision terminal
+use the same integration.
+"""
+
+
+import hashlib
+import secrets as _secrets
+
+from django.conf import settings
+from django.db import models
+from django.utils import timezone
+
+from accounts.models import Company
+from employees.models import Employee
+
+
+def _hash_key(raw):
+    """One-way hash of a device API key, for comparison at request time.
+
+    The key is shown to the operator once, at registration, and stored hashed -
+    the same discipline as a password, because a leaked key grants the ability to
+    inject attendance records for an entire company.
+    """
+    if not raw:
+        return ''
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+DEVICE_TYPES = [
+    ('fingerprint', 'Fingerprint'),
+    ('face', 'Face recognition'),
+    ('iris', 'Iris'),
+    ('palm', 'Palm'),
+    ('card', 'Card / RFID'),
+    ('other', 'Other'),
+]
+
+DEVICE_STATUSES = [
+    ('active', 'Active'),
+    ('inactive', 'Inactive'),
+    ('retired', 'Retired'),
+]
+
+PUNCH_TYPES = [
+    ('in', 'Clock in'),
+    ('out', 'Clock out'),
+    ('unknown', 'Unknown'),
+]
+
+PUNCH_STATUSES = [
+    ('pending', 'Pending'),
+    ('processed', 'Processed'),
+    ('ignored', 'Ignored'),
+    ('failed', 'Failed'),
+]
+
+ENROLLMENT_STATUSES = [
+    ('active', 'Active'),
+    ('revoked', 'Revoked'),
+]
+
+
+class BiometricDevice(models.Model):
+    company = models.ForeignKey(
+        Company, on_delete=models.CASCADE, related_name='biometric_devices')
+    name = models.CharField(max_length=120)
+    device_id = models.CharField(
+        max_length=80,
+        help_text='The identifier the device reports as, e.g. its serial number.',
+    )
+    device_type = models.CharField(
+        max_length=20, choices=DEVICE_TYPES, default='fingerprint')
+    location = models.CharField(max_length=160, blank=True)
+    status = models.CharField(
+        max_length=20, choices=DEVICE_STATUSES, default='active')
+    # Hashed API key used to authenticate punches from this device.
+    api_key_hash = models.CharField(max_length=64, blank=True)
+    last_seen_at = models.DateTimeField(null=True, blank=True)
+    last_sync_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['company', 'device_id'],
+                name='unique_biometric_device_per_company'),
+        ]
+        ordering = ['name']
+
+    def __str__(self):
+        return f'{self.name} ({self.device_id})'
+
+    @staticmethod
+    def generate_api_key():
+        """Return (raw, hashed). The raw value is shown once and never stored."""
+        raw = _secrets.token_urlsafe(32)
+        return raw, _hash_key(raw)
+
+    @classmethod
+    def create_with_key(cls, **kwargs):
+        """Create a device and return (instance, raw_api_key).
+
+        The raw key is returned to the caller and never persisted; only its
+        hash is stored. Callers must hand the raw value to the operator before
+        discarding it.
+        """
+        raw, hashed = cls.generate_api_key()
+        kwargs['api_key_hash'] = hashed
+        instance = cls.objects.create(**kwargs)
+        return instance, raw
+
+    def check_api_key(self, raw):
+        if not self.api_key_hash or not raw:
+            return False
+        return _hash_key(raw) == self.api_key_hash
+
+    def touch(self):
+        self.last_seen_at = timezone.now()
+        self.save(update_fields=['last_seen_at'])
+
+
+class BiometricEnrollment(models.Model):
+    employee = models.ForeignKey(
+        Employee, on_delete=models.CASCADE, related_name='biometric_enrollments')
+    device = models.ForeignKey(
+        BiometricDevice, on_delete=models.CASCADE,
+        related_name='enrollments')
+    method = models.CharField(max_length=20, choices=DEVICE_TYPES)
+    # The device-side reference for the stored template. HRCloudPay does not
+    # store the template itself - see the module docstring.
+    template_id = models.CharField(max_length=120, blank=True)
+    status = models.CharField(
+        max_length=20, choices=ENROLLMENT_STATUSES, default='active')
+    enrolled_at = models.DateTimeField(auto_now_add=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['employee', 'device'],
+                name='unique_biometric_enrollment_per_employee_device'),
+        ]
+        ordering = ['-enrolled_at']
+
+    def __str__(self):
+        return f'{self.employee.full_name} on {self.device.name}'
+
+    def revoke(self):
+        self.status = 'revoked'
+        self.revoked_at = timezone.now()
+        self.save(update_fields=['status', 'revoked_at'])
+
+
+class BiometricPunch(models.Model):
+    device = models.ForeignKey(
+        BiometricDevice, on_delete=models.CASCADE, related_name='punches')
+    employee = models.ForeignKey(
+        Employee, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='biometric_punches')
+    punch_time = models.DateTimeField()
+    punch_type = models.CharField(
+        max_length=10, choices=PUNCH_TYPES, default='unknown')
+    # The raw payload exactly as the device sent it, kept for reconciliation
+    # when a punch cannot be matched to an employee or a shift.
+    raw_payload = models.JSONField(default=dict, blank=True)
+    status = models.CharField(
+        max_length=20, choices=PUNCH_STATUSES, default='pending')
+    error = models.CharField(max_length=255, blank=True)
+    attendance_record = models.ForeignKey(
+        'attendance.Attendance', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='biometric_punches')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-punch_time']
+
+    def __str__(self):
+        who = self.employee.full_name if self.employee else 'unmatched'
+        return f'{who} {self.punch_type} at {self.punch_time}'

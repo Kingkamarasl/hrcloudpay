@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'leave',
     'integrations',
     'workflows',
+    'biometrics',
     'regional',
     'ai',
     'security',

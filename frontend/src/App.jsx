@@ -16,6 +16,7 @@ import Skeleton from './components/Skeleton';
 const About = lazy(() => import('./pages/About'));
 const Activate = lazy(() => import('./pages/Activate'));
 const Attendance = lazy(() => import('./pages/Attendance'));
+const Biometrics = lazy(() => import('./pages/Biometrics'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Departments = lazy(() => import('./pages/Departments'));
 const Employees = lazy(() => import('./pages/Employees'));
@@ -117,6 +118,7 @@ export default function App() {
                       <Route path="/payroll-setup" element={<PayrollSetup />} />
                       <Route path="/payroll-extras" element={<PayrollExtras />} />
                       <Route path="/attendance" element={<Attendance />} />
+                        <Route path="/biometrics" element={<RoleRoute roles={['owner','admin','hr']}><Biometrics /></RoleRoute>} />
                       <Route path="/leave" element={<LeaveRequests />} />
                       <Route path="/leave-accrual" element={<LeaveAccrual />} />
                       <Route path="/team" element={<Team />} />
