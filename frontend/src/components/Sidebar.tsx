@@ -40,6 +40,7 @@ const GROUPS: NavGroup[] = [
   { title: 'Security', links: [{ to: '/security-center', label: 'Security Center', icon: 'shield', roles: ['owner','admin'] }] },
   { title: 'Operations', links: [
     { to: '/attendance', label: 'Attendance', icon: 'clock' },
+    { to: '/attendance-grid', label: 'Attendance grid', icon: 'grid', roles: ['owner','admin','hr','department_manager'] },
     { to: '/biometrics', label: 'Biometric terminals', icon: 'shield', roles: ['owner','admin','hr'] },
     { to: '/leave-accrual', label: 'Leave accruals', icon: 'calendar', roles: ['owner','admin','hr'] },
     { to: '/leave', label: 'Leave & breaks', icon: 'calendar' },
