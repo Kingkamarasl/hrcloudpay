@@ -3,6 +3,7 @@ import { api, downloadFile } from '../api/client';
 import EmployeePicker from '../components/EmployeePicker';
 import Icon from '../components/Icon';
 import { useToast } from '../context/ToastContext';
+import { useAuth } from '../context/AuthContext';
 
 const leaveTypes = {
   annual: 'Annual', sick: 'Sick', maternity: 'Maternity',
@@ -30,6 +31,8 @@ async function downloadPdf(path, filename) {
 }
 
 export default function LeaveRequests() {
+  const { user } = useAuth();
+  const isEmployee = user?.role === 'employee';
   const toast = useToast();
   const [tab, setTab] = useState('leave');
   const [requests, setRequests] = useState([]);
@@ -43,28 +46,41 @@ export default function LeaveRequests() {
   const [breakForm, setBreakForm] = useState({
     employee: '', break_type: 'personal', date: '', start_time: '', end_time: '', reason: '',
   });
+  const [ownEmployeeId, setOwnEmployeeId] = useState(null);
 
   function load() {
     setLoading(true);
+    const profileRequest = isEmployee
+      ? api.get('/employees/employees/my-profile/')
+      : Promise.resolve(null);
     Promise.all([
       api.get('/leave/requests/'),
       api.get('/leave/break-requests/'),
+      profileRequest,
     ])
-      .then(([r, b]) => {
+      .then(([r, b, profile]) => {
         setRequests(r.results ?? r);
         setBreaks(b.results ?? b);
+        if (profile) {
+          setOwnEmployeeId(profile.id);
+          setLeaveForm((current) => ({ ...current, employee: profile.id }));
+          setBreakForm((current) => ({ ...current, employee: profile.id }));
+        }
       })
       .catch((err) => setError(err.message || 'Failed to load requests.'))
       .finally(() => setLoading(false));
   }
 
-  useEffect(load, []);
+  useEffect(load, [isEmployee]);
 
   async function submitLeave(e) {
     e.preventDefault();
     setError('');
     try {
-      await api.post('/leave/requests/', leaveForm);
+      await api.post('/leave/requests/', {
+        ...leaveForm,
+        employee: isEmployee ? ownEmployeeId : leaveForm.employee,
+      });
       setLeaveForm({ employee: '', leave_type: 'annual', start_date: '', end_date: '', reason: '' });
       toast.success('Leave request submitted');
       load();
@@ -79,7 +95,10 @@ export default function LeaveRequests() {
     e.preventDefault();
     setError('');
     try {
-      await api.post('/leave/break-requests/', breakForm);
+      await api.post('/leave/break-requests/', {
+        ...breakForm,
+        employee: isEmployee ? ownEmployeeId : breakForm.employee,
+      });
       setBreakForm({ employee: '', break_type: 'personal', date: '', start_time: '', end_time: '', reason: '' });
       toast.success('Break request submitted');
       load();
@@ -145,9 +164,9 @@ export default function LeaveRequests() {
     <div className="workspace-page">
       <section className="welcome-row">
         <div>
-          <div className="eyebrow">PEOPLE OPERATIONS</div>
-          <h1>Leave &amp; breaks</h1>
-          <p>Manage time-off and break requests, approvals, and printable employee copies.</p>
+          <div className="eyebrow">{isEmployee ? 'MY TIME OFF' : 'PEOPLE OPERATIONS'}</div>
+          <h1>{isEmployee ? 'My leave & breaks' : 'Leave & breaks'}</h1>
+          <p>{isEmployee ? 'Submit requests and follow their status.' : 'Manage time-off and break requests, approvals, and printable employee copies.'}</p>
         </div>
         <div className="dash-actions">
           <button type="button" className={`btn ${tab === 'leave' ? 'btn-primary' : 'btn-secondary'}`} style={{ width: 'auto' }} onClick={() => setTab('leave')}>
@@ -167,19 +186,19 @@ export default function LeaveRequests() {
             <div className="panel-head">
               <div>
                 <h2>New leave request</h2>
-                <p>Create a request for an employee, then review it from the queue below.</p>
+                <p>{isEmployee ? 'Send a request to your manager for review.' : 'Create a request for an employee, then review it from the queue below.'}</p>
               </div>
             </div>
             <form onSubmit={submitLeave}>
               <div className="form-row">
-                <div>
+                {!isEmployee && <div>
                   <label>Employee (search ID no / code / name)</label>
                   <EmployeePicker
                     value={leaveForm.employee}
                     required
                     onChange={(id) => setLeaveForm({ ...leaveForm, employee: id })}
                   />
-                </div>
+                </div>}
                 <div>
                   <label>Leave type</label>
                   <select value={leaveForm.leave_type} onChange={(e) => setLeaveForm({ ...leaveForm, leave_type: e.target.value })}>
@@ -205,7 +224,7 @@ export default function LeaveRequests() {
             <div className="panel-head">
               <div>
                 <h2>Leave queue <span className="count-pill">{pendingLeave} pending</span></h2>
-                <p>Review requests and download employee / company PDF copies.</p>
+                <p>{isEmployee ? 'Your submitted requests and their current status.' : 'Review requests and download employee / company PDF copies.'}</p>
                 <input
                   style={{ marginTop: 8, maxWidth: 280 }}
                   placeholder="Filter by name or ID…"
@@ -234,12 +253,14 @@ export default function LeaveRequests() {
                         <div className="table-actions">
                           {r.status === 'pending' && (
                             <>
-                              <button className="btn btn-secondary compact" onClick={() => reviewLeave(r.id, 'approve')}>Approve</button>
-                              <button className="btn btn-danger compact" onClick={() => reviewLeave(r.id, 'reject')}>Reject</button>
+                              {!isEmployee && <>
+                                <button className="btn btn-secondary compact" onClick={() => reviewLeave(r.id, 'approve')}>Approve</button>
+                                <button className="btn btn-danger compact" onClick={() => reviewLeave(r.id, 'reject')}>Reject</button>
+                              </>}
                             </>
                           )}
                           <button className="btn-link" onClick={() => pdfLeave(r.id, 'employee')}>Employee PDF</button>
-                          <button className="btn-link" onClick={() => pdfLeave(r.id, 'company')}>Company PDF</button>
+                          {!isEmployee && <button className="btn-link" onClick={() => pdfLeave(r.id, 'company')}>Company PDF</button>}
                         </div>
                       </td>
                     </tr>
@@ -266,19 +287,19 @@ export default function LeaveRequests() {
             <div className="panel-head">
               <div>
                 <h2>New break request</h2>
-                <p>Log a short, lunch, or personal break. Download a signed form PDF for the employee.</p>
+                <p>{isEmployee ? 'Log a short, lunch, or personal break for your manager to review.' : 'Log a short, lunch, or personal break. Download a signed form PDF for the employee.'}</p>
               </div>
             </div>
             <form onSubmit={submitBreak}>
               <div className="form-row">
-                <div>
+                {!isEmployee && <div>
                   <label>Employee (search ID no / code / name)</label>
                   <EmployeePicker
                     value={breakForm.employee}
                     required
                     onChange={(id) => setBreakForm({ ...breakForm, employee: id })}
                   />
-                </div>
+                </div>}
                 <div>
                   <label>Break type</label>
                   <select value={breakForm.break_type} onChange={(e) => setBreakForm({ ...breakForm, break_type: e.target.value })}>
@@ -308,7 +329,7 @@ export default function LeaveRequests() {
             <div className="panel-head">
               <div>
                 <h2>Break queue <span className="count-pill">{pendingBreak} pending</span></h2>
-                <p>Approve breaks and download employee or company PDF copies.</p>
+                <p>{isEmployee ? 'Your submitted break requests and their current status.' : 'Approve breaks and download employee or company PDF copies.'}</p>
               </div>
             </div>
             <div className="table-wrap">
@@ -331,12 +352,14 @@ export default function LeaveRequests() {
                         <div className="table-actions">
                           {r.status === 'pending' && (
                             <>
-                              <button className="btn btn-secondary compact" onClick={() => reviewBreak(r.id, 'approve')}>Approve</button>
-                              <button className="btn btn-danger compact" onClick={() => reviewBreak(r.id, 'reject')}>Reject</button>
+                              {!isEmployee && <>
+                                <button className="btn btn-secondary compact" onClick={() => reviewBreak(r.id, 'approve')}>Approve</button>
+                                <button className="btn btn-danger compact" onClick={() => reviewBreak(r.id, 'reject')}>Reject</button>
+                              </>}
                             </>
                           )}
                           <button className="btn-link" onClick={() => pdfBreak(r.id, 'employee')}>Employee PDF</button>
-                          <button className="btn-link" onClick={() => pdfBreak(r.id, 'company')}>Company PDF</button>
+                          {!isEmployee && <button className="btn-link" onClick={() => pdfBreak(r.id, 'company')}>Company PDF</button>}
                         </div>
                       </td>
                     </tr>
