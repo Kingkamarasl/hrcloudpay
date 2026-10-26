@@ -87,9 +87,12 @@ class BiometricEnrollmentViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         device = serializer.validated_data['device']
-        if device.company_id != self.request.user.company_id:
+        employee = serializer.validated_data['employee']
+        if (device.company_id != self.request.user.company_id
+                or employee.company_id != self.request.user.company_id):
             from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied('That device does not belong to your company.')
+            raise PermissionDenied(
+                'The employee and device must both belong to your company.')
         serializer.save()
 
     def destroy(self, request, *args, **kwargs):
@@ -130,7 +133,7 @@ class BiometricPunchIngestView(APIView):
     Shape:
         {
           "device_id": "ZK-001",
-          "employee": "CA0042" or 17,      # employee_code or PK, company-scoped
+          "employee": "CA0042" or 17,      # active enrollment template ID, employee_code or PK
           "punch_time": "2026-10-25T08:02:14+02:00",
           "punch_type": "in" | "out" | "unknown"
         }
@@ -146,8 +149,8 @@ class BiometricPunchIngestView(APIView):
                 {'detail': 'device_id and X-Biometric-Device-Key are required.'},
                 status=status.HTTP_400_BAD_REQUEST)
 
-        device = BiometricDevice.objects.filter(device_id=device_id).first()
-        if device is None or not device.check_api_key(raw_key):
+        device = BiometricDevice.authenticate(device_id, raw_key)
+        if device is None:
             return Response({'detail': 'Unknown or unauthorised device.'},
                             status=status.HTTP_401_UNAUTHORIZED)
         if device.status != 'active':
@@ -175,7 +178,15 @@ class BiometricPunchIngestView(APIView):
 
         punch = BiometricPunch.objects.create(
             device=device, employee=employee, punch_time=punch_time,
-            punch_type=punch_type, raw_payload=dict(request.data),
+            punch_type=punch_type,
+            # Devices may send vendor-specific fields, including biometric
+            # templates. Retain only the documented attendance fields so an
+            # incidental template can never be persisted in the punch log.
+            raw_payload={
+                key: request.data.get(key)
+                for key in ('device_id', 'employee', 'punch_time', 'punch_type')
+                if key in request.data
+            },
         )
         record = process_punch(punch)
         punch.refresh_from_db()

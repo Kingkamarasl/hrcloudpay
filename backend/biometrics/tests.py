@@ -161,6 +161,23 @@ class PunchIngestTests(TestCase):
 
         self.assertEqual(response.status_code, 401)
 
+    def test_same_device_id_in_another_company_authenticates_by_its_own_key(self):
+        other = _company('OtherCo')
+        other_device, other_key = _device(other, self.device.device_id)
+        other_employee = _employee(other, code='ZZ999')
+
+        response = self._punch({
+            'device_id': other_device.device_id,
+            'employee': other_employee.employee_code,
+            'punch_time': '2026-10-25T08:02:00+02:00', 'punch_type': 'in',
+        }, key=other_key)
+
+        self.assertEqual(response.status_code, 201, response.data)
+        punch = BiometricPunch.objects.get()
+        self.assertEqual(punch.device, other_device)
+        self.assertEqual(punch.employee, other_employee)
+        self.assertEqual(Attendance.objects.filter(employee=other_employee).count(), 1)
+
     def test_an_inactive_device_is_rejected(self):
         self.device.status = 'inactive'
         self.device.save(update_fields=['status'])
@@ -187,6 +204,39 @@ class PunchIngestTests(TestCase):
         self.assertIsNone(record.check_out)
         self.assertEqual(record.status, 'present')
         self.assertEqual(record.notes, 'Clocked in (biometric)')
+
+    def test_device_template_data_is_not_retained_in_the_punch_payload(self):
+        response = self._punch({
+            'device_id': self.device.device_id,
+            'employee': self.employee.employee_code,
+            'punch_time': '2026-10-25T08:02:00+02:00', 'punch_type': 'in',
+            'fingerprint_template': 'sensitive-template-bytes',
+            'vendor_metadata': {'face_embedding': 'sensitive-face-data'},
+        }, key=self.raw_key)
+
+        self.assertEqual(response.status_code, 201, response.data)
+        punch = BiometricPunch.objects.get()
+        self.assertEqual(set(punch.raw_payload), {
+            'device_id', 'employee', 'punch_time', 'punch_type',
+        })
+        self.assertNotIn('fingerprint_template', punch.raw_payload)
+        self.assertNotIn('vendor_metadata', punch.raw_payload)
+
+    def test_active_enrollment_template_id_matches_the_employee(self):
+        BiometricEnrollment.objects.create(
+            employee=self.employee, device=self.device,
+            method='fingerprint', template_id='terminal-user-42')
+
+        response = self._punch({
+            'device_id': self.device.device_id,
+            'employee': 'terminal-user-42',
+            'punch_time': '2026-10-25T08:02:00+02:00', 'punch_type': 'in',
+        }, key=self.raw_key)
+
+        self.assertEqual(response.status_code, 201, response.data)
+        punch = BiometricPunch.objects.get()
+        self.assertEqual(punch.employee, self.employee)
+        self.assertEqual(Attendance.objects.get().employee, self.employee)
 
     def test_a_clock_out_closes_the_open_shift(self):
         self._punch({
@@ -359,6 +409,17 @@ class EnrollmentTests(TestCase):
         }, format='json')
 
         self.assertEqual(response.status_code, 403)
+
+    def test_an_employee_cannot_be_enrolled_on_another_companys_device(self):
+        other = _company('OtherCo')
+        other_employee = _employee(other, code='ZZ999')
+        response = self.client.post('/api/biometrics/enrollments/', {
+            'employee': other_employee.id, 'device': self.device.id,
+            'method': 'fingerprint', 'template_id': 'foreign-template',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(BiometricEnrollment.objects.exists())
 
     def test_revoking_an_enrollment(self):
         enr = BiometricEnrollment.objects.create(

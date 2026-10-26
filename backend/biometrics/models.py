@@ -128,6 +128,19 @@ class BiometricDevice(models.Model):
             return False
         return _hash_key(raw) == self.api_key_hash
 
+    @classmethod
+    def authenticate(cls, device_id, raw):
+        """Resolve a device by its tenant-local ID and its API-key hash.
+
+        Device IDs are only unique within a company, so looking up by ID alone
+        can select another tenant's device when serial numbers collide.
+        """
+        if not device_id or not raw:
+            return None
+        return cls.objects.filter(
+            device_id=device_id, api_key_hash=_hash_key(raw),
+        ).first()
+
     def touch(self):
         self.last_seen_at = timezone.now()
         self.save(update_fields=['last_seen_at'])
@@ -174,8 +187,8 @@ class BiometricPunch(models.Model):
     punch_time = models.DateTimeField()
     punch_type = models.CharField(
         max_length=10, choices=PUNCH_TYPES, default='unknown')
-    # The raw payload exactly as the device sent it, kept for reconciliation
-    # when a punch cannot be matched to an employee or a shift.
+    # Allowlisted attendance fields from the device payload, kept for
+    # reconciliation when a punch cannot be matched to an employee or shift.
     raw_payload = models.JSONField(default=dict, blank=True)
     status = models.CharField(
         max_length=20, choices=PUNCH_STATUSES, default='pending')

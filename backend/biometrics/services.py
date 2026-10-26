@@ -129,12 +129,26 @@ def _open_record(employee):
 def match_employee(device, identifier):
     """Resolve a device-side identifier to an Employee at the device's company.
 
-    Devices report their own identifiers - a badge number, a user id from their
-    own database. We accept the employee's PK or employee_code, scoped to the
-    device's company so a device can never record attendance for another tenant.
+    Prefer the active enrollment's device-side template ID, then accept the
+    employee's PK or employee_code for devices that report HRCloudPay IDs. All
+    matches are scoped to the device's company; ambiguous template IDs are not
+    guessed.
     """
     if identifier is None or identifier == '':
         return None
+    from biometrics.models import BiometricEnrollment
+
+    template_matches = list(BiometricEnrollment.objects.filter(
+        device=device,
+        employee__company_id=device.company_id,
+        status='active',
+        template_id=str(identifier),
+    ).select_related('employee')[:2])
+    if len(template_matches) == 1:
+        return template_matches[0].employee
+    if len(template_matches) > 1:
+        return None
+
     qs = Employee.objects.filter(company=device.company)
     try:
         pk = int(identifier)
