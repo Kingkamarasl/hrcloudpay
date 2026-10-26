@@ -39,7 +39,9 @@ export default function AttendanceGrid(){
  }
  useEffect(()=>{load()},[year,month,department,employee]);
  useEffect(()=>{
-  api.get('/employees/?limit=500').then(d=>{
+  // The employee list is nested below the employees router; /employees/ is
+  // only the DRF browsable API root and returns child URLs, not employee rows.
+  api.get('/employees/employees/?limit=500').then(d=>{
    const arr=d.results??d; setEmployees(Array.isArray(arr)?arr:(arr.results??[]));
   }).catch(()=>{});
  },[]);

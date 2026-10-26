@@ -22,7 +22,7 @@ export default function Biometrics(){
      api.get('/biometrics/devices/'),
      api.get('/biometrics/enrollments/'),
      api.get('/biometrics/punches/?limit=100'),
-     api.get('/employees/?limit=500'),
+     api.get('/employees/employees/?limit=500'),
    ]);
    setDevices(d.results??d);setEnrollments(e.results??e);setPunches(p.results??p);
    const empData=em.results??em;

@@ -50,6 +50,12 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Build frontend for backend integration tests
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+
       - name: Install dependencies
         run: |
           cd backend
