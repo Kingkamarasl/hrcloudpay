@@ -76,7 +76,7 @@ export default function Navbar({ onMenuClick, onSearchClick }: NavbarProps) {
                 <small>{user?.email || user?.company?.name}</small>
               </div>
               {isEmployee ? (
-                <Link to="/employees" className="user-dropdown-item" onClick={() => setMenuOpen(false)}>
+                <Link to="/my-workspace" className="user-dropdown-item" onClick={() => setMenuOpen(false)}>
                   <Icon name="user" size={16} /> My profile
                 </Link>
               ) : (

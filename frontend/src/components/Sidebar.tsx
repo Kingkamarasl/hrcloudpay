@@ -19,12 +19,13 @@ interface NavGroup {
 const GROUPS: NavGroup[] = [
   { title: 'Overview', links: [
     { to: '/dashboard', label: 'Dashboard', icon: 'grid', end: true },
+    { to: '/my-workspace', label: 'My workspace', icon: 'user', roles: ['employee'] },
     { to: '/ai', label: 'AI Copilot', icon: 'sparkles' },
     { to: '/ai-drafts', label: 'Drafts for review', icon: 'file', roles: DRAFT_MANAGER_ROLES },
     { to: '/knowledge', label: 'Knowledge Center', icon: 'file', roles: KNOWLEDGE_MANAGER_ROLES },
   ] },
   { title: 'People', links: [
-    { to: '/employees', label: 'My profile', icon: 'user', roles: ['employee'] },
+    { to: '/my-workspace', label: 'My profile', icon: 'user', roles: ['employee'] },
     { to: '/employees', label: 'Employees', icon: 'users', roles: ['owner','admin','hr','department_manager'] },
     { to: '/request-tracking', label: 'Request tracking', icon: 'bell', roles: ['owner','admin','hr','department_manager','employee'] },
     { to: '/departments', label: 'Departments', icon: 'building', roles: ['owner','admin','hr','department_manager'] },

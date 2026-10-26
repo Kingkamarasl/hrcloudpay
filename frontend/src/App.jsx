@@ -19,6 +19,7 @@ const Attendance = lazy(() => import('./pages/Attendance'));
 const AttendanceGrid = lazy(() => import('./pages/AttendanceGrid'));
 const Biometrics = lazy(() => import('./pages/Biometrics'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
+const EmployeeDashboard = lazy(() => import('./pages/EmployeeDashboard'));
 const Departments = lazy(() => import('./pages/Departments'));
 const Employees = lazy(() => import('./pages/Employees'));
 const EmployeeProfile = lazy(() => import('./pages/EmployeeProfile'));
@@ -65,6 +66,11 @@ function PageLoader() {
   return <Skeleton />;
 }
 
+function DashboardRoute() {
+  const { user } = useAuth();
+  return user?.role === 'employee' ? <EmployeeDashboard /> : <Dashboard />;
+}
+
 export default function App() {
   return (
     <ErrorBoundary>
@@ -103,7 +109,8 @@ export default function App() {
                         </ProtectedRoute>
                       }
                     >
-                      <Route path="/dashboard" element={<Dashboard />} />
+                      <Route path="/dashboard" element={<DashboardRoute />} />
+                      <Route path="/my-workspace" element={<RoleRoute roles={['employee']}><EmployeeDashboard /></RoleRoute>} />
                       <Route path="/security-center" element={<SecurityCenter />} />
                       <Route path="/ai" element={<AIAssistant />} />
                       <Route path="/ai-drafts" element={<RoleRoute roles={DRAFT_MANAGER_ROLES}><AIDrafts /></RoleRoute>} />
