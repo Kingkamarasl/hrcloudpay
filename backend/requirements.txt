@@ -1,5 +1,5 @@
-Django>=5.2,<5.3
-djangorestframework>=3.18,<3.19
+Django>=5.2
+ djangorestframework>=3.18
 django-cors-headers>=4.3
 python-decouple>=3.8
 reportlab>=4.2,<5
@@ -9,12 +9,12 @@ whitenoise>=6.7,<7
 # needs no libpq-dev or a compiler toolchain. Django 5.2 tries `psycopg` first
 # and falls back to `psycopg2`, so without one of these the app cannot even
 # import its own models when DATABASE_URL points at Postgres.
-psycopg[binary]>=3.2,<4
+psycopg[binary]>=3.2
 
 # WSGI server. The README's release order runs `gunicorn hrcloudpay.wsgi`, but
 # gunicorn was not listed here, so a clean `pip install -r requirements.txt`
 # produced an image with no way to serve the app at all.
-gunicorn>=23,<24
+gunicorn>=23
 
 # Shared cache backend. DRF's throttling stores its counters in the default
 # cache, which is per-process (LocMemCache) unless REDIS_URL is set. Running
@@ -28,9 +28,9 @@ redis>=5,<7
 # staticfiles deliberately stays on the local backend.
 django-storages[boto3]>=1.14,<2
 
-cryptography>=43,<46
+cryptography>=43
 
-django-unfold>=0.91.0,<0.100.0
+django-unfold>=0.91.0
 
 openpyxl>=3.1,<4
 Pillow>=10.0,<12
