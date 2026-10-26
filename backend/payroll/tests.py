@@ -1,6 +1,7 @@
 from datetime import date
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError
 from django.db import IntegrityError
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -35,6 +36,39 @@ class PayrollEngineTests(TestCase):
         self.assertEqual(result['tax_amount'], Decimal('100.00'))
         self.assertEqual(result['total_contributions'], Decimal('50.00'))
         self.assertEqual(result['net_salary'], Decimal('850.00'))
+
+    def test_payslip_cannot_mix_employee_and_payroll_run_companies(self):
+        first = Company.objects.create(name='First Co', email='first@example.com')
+        second = Company.objects.create(name='Second Co', email='second@example.com')
+        employee = Employee.objects.create(
+            company=second, employee_code='E2', first_name='Binta', last_name='Diallo',
+            email='binta@example.com', base_salary=1000,
+        )
+        run = PayrollRun.objects.create(
+            company=first, period_start=date(2026, 1, 1), period_end=date(2026, 1, 31),
+        )
+
+        with self.assertRaises(ValidationError):
+            Payslip.objects.create(
+                payroll_run=run, employee=employee, base_salary=1000,
+                gross_salary=1000, net_salary=900,
+            )
+
+    def test_payslip_cannot_have_negative_net_salary(self):
+        company = Company.objects.create(name='Net Co', email='net@example.com')
+        employee = Employee.objects.create(
+            company=company, employee_code='E3', first_name='Kofi', last_name='Mensah',
+            email='kofi@example.com', base_salary=1000,
+        )
+        run = PayrollRun.objects.create(
+            company=company, period_start=date(2026, 2, 1), period_end=date(2026, 2, 28),
+        )
+
+        with self.assertRaises(ValidationError):
+            Payslip.objects.create(
+                payroll_run=run, employee=employee, base_salary=1000,
+                gross_salary=1000, net_salary=-1,
+            )
 
 
 class PayrollAPITests(TestCase):

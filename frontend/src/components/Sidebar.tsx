@@ -24,7 +24,8 @@ const GROUPS: NavGroup[] = [
     { to: '/knowledge', label: 'Knowledge Center', icon: 'file', roles: KNOWLEDGE_MANAGER_ROLES },
   ] },
   { title: 'People', links: [
-    { to: '/employees', label: 'Employees', icon: 'users', roles: ['owner','admin','hr','department_manager','employee'] },
+    { to: '/employees', label: 'My profile', icon: 'user', roles: ['employee'] },
+    { to: '/employees', label: 'Employees', icon: 'users', roles: ['owner','admin','hr','department_manager'] },
     { to: '/request-tracking', label: 'Request tracking', icon: 'bell', roles: ['owner','admin','hr','department_manager','employee'] },
     { to: '/departments', label: 'Departments', icon: 'building', roles: ['owner','admin','hr','department_manager'] },
     { to: '/compliance', label: 'Compliance', icon: 'shield', roles: ['owner','admin','hr','department_manager'] },
@@ -118,10 +119,12 @@ export default function Sidebar({ onNavigate }: SidebarProps) {
         </div>
       )}
       <div className="sidebar-bottom">
-        <NavLink to="/billing" className="sidebar-link" onClick={handleNav}>
-          <Icon name="wallet" />
-          <span>Plans & billing</span>
-        </NavLink>
+        {role && ['owner', 'admin'].includes(role) && (
+          <NavLink to="/billing" className="sidebar-link" onClick={handleNav}>
+            <Icon name="wallet" />
+            <span>Plans & billing</span>
+          </NavLink>
+        )}
         <div className="upgrade-card">
           <strong>Ready to grow?</strong>
           <p>Unlock more HRCloudPay features as your team grows.</p>

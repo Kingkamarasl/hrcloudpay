@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.core.validators import MinValueValidator
 
@@ -138,6 +139,20 @@ class Payslip(models.Model):
             ),
         ]
 
+    def clean(self):
+        errors = {}
+        if self.payroll_run_id and self.employee_id:
+            if self.payroll_run.company_id != self.employee.company_id:
+                errors['employee'] = 'The employee must belong to the payroll run company.'
+        if self.net_salary is not None and self.net_salary < 0:
+            errors['net_salary'] = 'Net salary cannot be negative.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
     def __str__(self):
         return f"Payslip: {self.employee.full_name} - {self.payroll_run}"
 
@@ -187,6 +202,19 @@ class OvertimeEntry(models.Model):
     class Meta:
         ordering = ['-work_date']
 
+    def clean(self):
+        errors = {}
+        if self.employee_id and self.company_id and self.employee.company_id != self.company_id:
+            errors['company'] = 'The employee must belong to the overtime entry company.'
+        if self.payroll_run_id and self.company_id and self.payroll_run.company_id != self.company_id:
+            errors['payroll_run'] = 'The payroll run must belong to the overtime entry company.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
 
 class SalaryAdvance(models.Model):
     STATUS = [
@@ -215,7 +243,12 @@ class SalaryAdvance(models.Model):
     def save(self, *args, **kwargs):
         if self.remaining is None:
             self.remaining = self.amount
-        super().save(*args, **kwargs)
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def clean(self):
+        if self.employee_id and self.company_id and self.employee.company_id != self.company_id:
+            raise ValidationError({'company': 'The employee must belong to the salary advance company.'})
 
 
 class AdvanceRecovery(models.Model):
@@ -223,6 +256,20 @@ class AdvanceRecovery(models.Model):
     payslip = models.ForeignKey(Payslip, on_delete=models.CASCADE, related_name='advance_recoveries')
     amount = models.DecimalField(max_digits=14, decimal_places=2)
     recovered_at = models.DateTimeField(auto_now_add=True)
+
+    def clean(self):
+        errors = {}
+        if self.advance_id and self.payslip_id:
+            if self.advance.company_id != self.payslip.employee.company_id:
+                errors['advance'] = 'The advance and payslip must belong to the same company.'
+            if self.payslip.employee_id != self.advance.employee_id:
+                errors['payslip'] = 'The advance and payslip must belong to the same employee.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
 
 
 class PublicHoliday(models.Model):

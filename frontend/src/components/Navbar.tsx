@@ -36,6 +36,7 @@ export default function Navbar({ onMenuClick, onSearchClick }: NavbarProps) {
 
   const initials = (user?.username || 'U').slice(0, 2).toUpperCase();
   const plan = user?.company?.plan || 'starter';
+  const isEmployee = user?.role === 'employee';
 
   return (
     <header className="navbar">
@@ -74,18 +75,26 @@ export default function Navbar({ onMenuClick, onSearchClick }: NavbarProps) {
                 <strong>{user?.username}</strong>
                 <small>{user?.email || user?.company?.name}</small>
               </div>
-              <Link to="/team" className="user-dropdown-item" onClick={() => setMenuOpen(false)}>
-                <Icon name="user" size={16} /> Profile & team
-              </Link>
-              <Link to="/billing" className="user-dropdown-item" onClick={() => setMenuOpen(false)}>
-                <Icon name="wallet" size={16} /> Billing
-              </Link>
-              <Link to="/payroll-setup" className="user-dropdown-item" onClick={() => setMenuOpen(false)}>
-                <Icon name="settings" size={16} /> Payroll settings
-              </Link>
-              <Link to="/company-settings" className="user-dropdown-item" onClick={() => setMenuOpen(false)}>
-                <Icon name="building" size={16} /> Company profile & logo
-              </Link>
+              {isEmployee ? (
+                <Link to="/employees" className="user-dropdown-item" onClick={() => setMenuOpen(false)}>
+                  <Icon name="user" size={16} /> My profile
+                </Link>
+              ) : (
+                <>
+                  <Link to="/team" className="user-dropdown-item" onClick={() => setMenuOpen(false)}>
+                    <Icon name="user" size={16} /> Profile & team
+                  </Link>
+                  <Link to="/billing" className="user-dropdown-item" onClick={() => setMenuOpen(false)}>
+                    <Icon name="wallet" size={16} /> Billing
+                  </Link>
+                  <Link to="/payroll-setup" className="user-dropdown-item" onClick={() => setMenuOpen(false)}>
+                    <Icon name="settings" size={16} /> Payroll settings
+                  </Link>
+                  <Link to="/company-settings" className="user-dropdown-item" onClick={() => setMenuOpen(false)}>
+                    <Icon name="building" size={16} /> Company profile & logo
+                  </Link>
+                </>
+              )}
               <button type="button" className="user-dropdown-item" onClick={() => { setMenuOpen(false); toggle(); }}>
                 <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={16} />
                 {theme === 'dark' ? 'Light mode' : 'Dark mode'}

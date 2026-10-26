@@ -122,7 +122,9 @@ class ProcessPayrollRunView(APIView):
                 result['breakdown'] = breakdown
                 payslip = Payslip.objects.create(payroll_run=payroll_run, employee=employee, **result)
                 for adv_id, take in advance_plan:
-                    adv = SalaryAdvance.objects.select_for_update().get(id=adv_id, employee=employee)
+                    adv = SalaryAdvance.objects.select_for_update().get(
+                        id=adv_id, employee=employee, company=company,
+                    )
                     adv.remaining = adv.remaining - take
                     if adv.remaining <= 0:
                         adv.remaining = 0
@@ -132,7 +134,9 @@ class ProcessPayrollRunView(APIView):
                     adv.save(update_fields=['remaining', 'status'])
                     AdvanceRecovery.objects.create(advance=adv, payslip=payslip, amount=take)
                 if ot_ids:
-                    OvertimeEntry.objects.filter(id__in=ot_ids, employee=employee).update(payroll_run=payroll_run)
+                    OvertimeEntry.objects.filter(
+                        id__in=ot_ids, employee=employee, company=company, payroll_run__isnull=True,
+                    ).update(payroll_run=payroll_run)
                 if encash_ids:
                     from leave.models import LeaveEncashment
                     LeaveEncashment.objects.filter(id__in=encash_ids, employee=employee).update(status='paid')
@@ -175,12 +179,11 @@ class ApprovePayrollRunView(APIView):
             run.approved_at = timezone.now()
             run.approved_by = request.user
             run.save(update_fields=['status', 'approved_at', 'approved_by'])
-            try:
-                from regional.compliance import create_compliance_pack
-                create_compliance_pack(run, request.user)
-            except Exception as e:
-                import logging
-                logging.getLogger(__name__).warning('Compliance pack creation failed for payroll run %s: %s', run.id, e)
+            from regional.compliance import create_compliance_pack
+            # Keep approval and its required compliance artifact atomic. If
+            # generation fails, the surrounding transaction rolls back and the
+            # run remains processed instead of reporting a false approval.
+            create_compliance_pack(run, request.user)
         audit(
             request.user, 'payroll_approve',
             f'Approved payroll {run.period_start} to {run.period_end}',
@@ -207,12 +210,10 @@ class PayPayrollRunView(APIView):
             run.status = 'paid'
             run.save(update_fields=['status'])
             run.payslips.update(payment_method=method, payment_reference=reference, paid_at=timezone.now())
-            try:
-                from regional.compliance import create_compliance_pack
-                create_compliance_pack(run, request.user)
-            except Exception as exc:
-                import logging
-                logging.getLogger(__name__).warning('Compliance pack refresh after payroll payment failed for run %s: %s', run.id, exc)
+            from regional.compliance import create_compliance_pack
+            # Keep payment state and the compliance artifact atomic. A pack
+            # failure rolls back the payment and payslip updates.
+            create_compliance_pack(run, request.user)
         audit(request.user, 'payroll_payment', f'Recorded payment for payroll {run.period_start} to {run.period_end}', run.company, 'payroll_run', run.id, {'payment_method': method, 'payment_reference': reference}, request=request)
         return Response(PayrollRunSerializer(run).data)
 
