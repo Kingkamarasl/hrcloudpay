@@ -41,6 +41,23 @@ class PayrollConfig(models.Model):
         return f"Payroll config for {self.company.name}"
 
 
+class PayrollConfigVersion(models.Model):
+    """Immutable configuration snapshot used to make payroll reproducible."""
+    payroll_config = models.ForeignKey(PayrollConfig, on_delete=models.CASCADE, related_name='versions')
+    version = models.PositiveIntegerField()
+    effective_from = models.DateField()
+    snapshot = models.JSONField(default=dict)
+    created_by = models.ForeignKey('accounts.User', null=True, blank=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-effective_from', '-version']
+        constraints = [models.UniqueConstraint(fields=['payroll_config', 'version'], name='unique_payroll_config_version')]
+
+    def __str__(self):
+        return f"{self.payroll_config.company.name} payroll rules v{self.version} from {self.effective_from}"
+
+
 class TaxBracket(models.Model):
     """
     One progressive income-tax bracket. min_amount/max_amount define the
@@ -95,6 +112,10 @@ class PayrollRun(models.Model):
         'accounts.User', null=True, blank=True, on_delete=models.SET_NULL,
         related_name='approved_payroll_runs',
     )
+    config_version = models.ForeignKey(PayrollConfigVersion, null=True, blank=True, on_delete=models.PROTECT, related_name='payroll_runs')
+    configuration_snapshot = models.JSONField(default=dict, blank=True)
+    previewed_at = models.DateTimeField(null=True, blank=True)
+    preview_summary = models.JSONField(default=dict, blank=True)
 
     class Meta:
         ordering = ['-period_start']

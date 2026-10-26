@@ -20,7 +20,10 @@ from employees.models import Employee
 
 from .models import PayrollConfig, PayrollRun, Payslip
 from .serializers import PayrollConfigSerializer, PayrollRunSerializer, PayslipSerializer
-from .services import calculate_payslip, collect_compliance_gaps
+from .services import (
+    calculate_payslip, collect_compliance_gaps, effective_config_for,
+    ensure_config_version,
+)
 from .pdf import build_payslip_pdf
 
 
@@ -86,6 +89,52 @@ class PayrollRunViewSet(viewsets.ModelViewSet):
             )
 
 
+class PreviewPayrollRunView(APIView):
+    """Calculate a draft run without creating payslips or consuming recoveries."""
+    permission_classes = [IsCompanyMember, IsCompanyActive, CanManagePayroll]
+
+    def post(self, request, run_id):
+        company = request.user.company
+        payroll_run = get_object_or_404(PayrollRun, id=run_id, company=company)
+        if payroll_run.status != 'draft':
+            return Response({'detail': 'Only draft payroll runs can be previewed.'}, status=400)
+        config = PayrollConfig.objects.filter(company=company).first()
+        if not config:
+            return Response({'detail': 'Complete payroll setup before previewing payroll.'}, status=400)
+        calculation_config, version = effective_config_for(config, payroll_run.period_end)
+        employees = list(Employee.objects.filter(company=company, employment_status='active'))
+        totals = {key: Decimal('0') for key in ('gross', 'tax', 'contributions', 'deductions', 'net')}
+        rows, exceptions = [], []
+        for employee in employees:
+            result = calculate_payslip(employee, calculation_config, payroll_run=payroll_run)
+            fields = {'gross': 'gross_salary', 'tax': 'tax_amount', 'contributions': 'total_contributions', 'deductions': 'total_other_deductions', 'net': 'net_salary'}
+            for key, field in fields.items():
+                totals[key] += result[field]
+            breakdown = result.get('breakdown') or {}
+            if result['net_salary'] < 0 or (result['gross_salary'] and result['net_salary'] / result['gross_salary'] < Decimal('0.25')):
+                exceptions.append({'type': 'low_net_pay', 'employee': employee.full_name, 'employee_id': employee.id, 'message': 'Net pay is negative or below 25% of gross pay.'})
+            if breakdown.get('overtime'):
+                exceptions.append({'type': 'overtime', 'employee': employee.full_name, 'employee_id': employee.id, 'message': 'Includes overtime.'})
+            if breakdown.get('advance_recoveries'):
+                exceptions.append({'type': 'advance_recovery', 'employee': employee.full_name, 'employee_id': employee.id, 'message': 'Includes a salary advance recovery.'})
+            if breakdown.get('compliance_gaps'):
+                exceptions.append({'type': 'compliance', 'employee': employee.full_name, 'employee_id': employee.id, 'message': 'Statutory rule coverage requires review.'})
+            rows.append({'employee_id': employee.id, 'employee': employee.full_name, 'base_salary': str(employee.base_salary), 'gross': str(result['gross_salary']), 'tax': str(result['tax_amount']), 'contributions': str(result['total_contributions']), 'deductions': str(result['total_other_deductions']), 'net': str(result['net_salary'])})
+        previous = PayrollRun.objects.filter(company=company, status__in=['processed', 'approved', 'paid'], period_end__lt=payroll_run.period_start).order_by('-period_end').first()
+        previous_by_employee = {slip.employee_id: slip for slip in previous.payslips.all()} if previous else {}
+        current_ids = {row['employee_id'] for row in rows}
+        if previous:
+            for row in rows:
+                old = previous_by_employee.get(row['employee_id'])
+                if old and abs(Decimal(row['gross']) - old.gross_salary) / max(old.gross_salary, Decimal('1')) >= Decimal('0.20'):
+                    exceptions.append({'type': 'salary_change', 'employee': row['employee'], 'employee_id': row['employee_id'], 'message': 'Gross pay changes by 20% or more versus the previous run.'})
+            for employee_id, old in previous_by_employee.items():
+                if employee_id not in current_ids:
+                    exceptions.append({'type': 'inactive_employee', 'employee': old.employee.full_name, 'employee_id': employee_id, 'message': 'Employee appeared in the previous run but is not active for this preview.'})
+        summary = {'employee_count': len(rows), 'totals': {key: str(value.quantize(Decimal('0.01'))) for key, value in totals.items()}, 'exceptions': exceptions, 'configuration_version': version.version if version else None, 'configuration_effective_from': version.effective_from if version else None}
+        return Response({'run_id': payroll_run.id, 'period_start': payroll_run.period_start, 'period_end': payroll_run.period_end, 'summary': summary, 'rows': rows})
+
+
 class ProcessPayrollRunView(APIView):
     """
     Runs the payroll calculation engine for every active employee in
@@ -111,10 +160,15 @@ class ProcessPayrollRunView(APIView):
             if payroll_run.status != 'draft':
                 return Response({'detail': 'This payroll run has already been processed.'}, status=400)
 
+            calculation_config, config_version = effective_config_for(config, payroll_run.period_end)
+            if config_version is None:
+                config_version = ensure_config_version(config, user=request.user, effective_from=payroll_run.period_end)
+                calculation_config, config_version = effective_config_for(config, payroll_run.period_end)
+
             employees = Employee.objects.filter(company=company, employment_status='active')
             from .models import OvertimeEntry, SalaryAdvance, AdvanceRecovery
             for employee in employees:
-                result = calculate_payslip(employee, config, payroll_run=payroll_run)
+                result = calculate_payslip(employee, calculation_config, payroll_run=payroll_run)
                 breakdown = result.get('breakdown') or {}
                 advance_plan = breakdown.pop('_advance_plan', [])
                 ot_ids = breakdown.pop('_overtime_entry_ids', [])
@@ -142,7 +196,9 @@ class ProcessPayrollRunView(APIView):
                     LeaveEncashment.objects.filter(id__in=encash_ids, employee=employee).update(status='paid')
 
             payroll_run.status = 'processed'
-            payroll_run.save(update_fields=['status'])
+            payroll_run.config_version = config_version
+            payroll_run.configuration_snapshot = config_version.snapshot
+            payroll_run.save(update_fields=['status', 'config_version', 'configuration_snapshot'])
 
         audit(request.user, 'payroll_process', f'Processed payroll {payroll_run.period_start} to {payroll_run.period_end}', company, 'payroll_run', payroll_run.id, {'employee_count': employees.count()}, request=request)
         return Response(PayrollRunSerializer(payroll_run).data)

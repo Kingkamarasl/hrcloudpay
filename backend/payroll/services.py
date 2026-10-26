@@ -12,6 +12,75 @@ from django.utils import timezone
 
 from .absence import absence_deduction
 
+
+class _SnapshotCollection(list):
+    def all(self):
+        return self
+
+    def order_by(self, field):
+        name = field.lstrip('-')
+        return _SnapshotCollection(sorted(self, key=lambda item: getattr(item, name), reverse=field.startswith('-')))
+
+
+class PayrollConfigSnapshot:
+    """Calculation-compatible object reconstructed from an immutable JSON snapshot."""
+    def __init__(self, snapshot):
+        self.currency = snapshot.get('currency', 'USD')
+        self.pay_frequency = snapshot.get('pay_frequency', 'monthly')
+        self.tax_calculation_enabled = snapshot.get('tax_calculation_enabled', True)
+        self.deduct_unpaid_absence = snapshot.get('deduct_unpaid_absence', False)
+        self.tax_brackets = _SnapshotCollection([
+            type('TaxBracketSnapshot', (), {
+                'min_amount': Decimal(item['min_amount']),
+                'max_amount': Decimal(item['max_amount']) if item.get('max_amount') is not None else None,
+                'rate': Decimal(item['rate']),
+            })() for item in snapshot.get('tax_brackets', [])
+        ])
+        self.contributions = _SnapshotCollection([
+            type('ContributionSnapshot', (), {
+                'name': item['name'],
+                'is_percentage': item['is_percentage'],
+                'employee_rate': Decimal(item['employee_rate']),
+                'employer_rate': Decimal(item['employer_rate']),
+            })() for item in snapshot.get('contributions', [])
+        ])
+
+
+def serialize_payroll_config(config):
+    return {
+        'currency': config.currency,
+        'pay_frequency': config.pay_frequency,
+        'tax_calculation_enabled': config.tax_calculation_enabled,
+        'deduct_unpaid_absence': config.deduct_unpaid_absence,
+        'tax_brackets': [
+            {'min_amount': str(row.min_amount), 'max_amount': str(row.max_amount) if row.max_amount is not None else None, 'rate': str(row.rate)}
+            for row in config.tax_brackets.all()
+        ],
+        'contributions': [
+            {'name': row.name, 'is_percentage': row.is_percentage, 'employee_rate': str(row.employee_rate), 'employer_rate': str(row.employer_rate)}
+            for row in config.contributions.all()
+        ],
+    }
+
+
+def ensure_config_version(config, user=None, effective_from=None):
+    from .models import PayrollConfigVersion
+    effective_from = effective_from or timezone.localdate()
+    snapshot = serialize_payroll_config(config)
+    latest = config.versions.order_by('-version').first()
+    if latest and latest.effective_from == effective_from and latest.snapshot == snapshot:
+        return latest
+    version = (latest.version + 1) if latest else 1
+    return PayrollConfigVersion.objects.create(
+        payroll_config=config, version=version, effective_from=effective_from,
+        snapshot=snapshot, created_by=user,
+    )
+
+
+def effective_config_for(config, as_of):
+    version = config.versions.filter(effective_from__lte=as_of).order_by('-effective_from', '-version').first()
+    return (PayrollConfigSnapshot(version.snapshot), version) if version else (config, None)
+
 class StatutoryCalculationService:
     """
     Service for calculating employee statutory contributions.

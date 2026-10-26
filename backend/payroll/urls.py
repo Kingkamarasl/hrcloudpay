@@ -4,7 +4,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     ApprovePayrollRunView, PayPayrollRunView, PayrollConfigView, PayrollDashboardView,
     PayrollExportView, PayrollRunViewSet, PayrollSummaryView, PayslipViewSet, ProcessPayrollRunView,
-    EmailPayslipsView, BankFileExportView, ComparePayrollRunsView,
+    EmailPayslipsView, BankFileExportView, ComparePayrollRunsView, PreviewPayrollRunView,
     OvertimeRuleView, OvertimeEntryListCreateView, SalaryAdvanceListCreateView, PublicHolidayListCreateView,
     OvertimeSyncFromAttendanceView,
 )
@@ -16,6 +16,7 @@ router.register('payslips', PayslipViewSet, basename='payslip')
 urlpatterns = [
     path('config/', PayrollConfigView.as_view(), name='payroll-config'),
     path('runs/<int:run_id>/process/', ProcessPayrollRunView.as_view(), name='process-payroll-run'),
+    path('runs/<int:run_id>/preview/', PreviewPayrollRunView.as_view(), name='preview-payroll-run'),
     path('runs/<int:run_id>/approve/', ApprovePayrollRunView.as_view(), name='approve-payroll-run'),
     path('runs/<int:run_id>/pay/', PayPayrollRunView.as_view(), name='pay-payroll-run'),
     path('runs/<int:run_id>/email-payslips/', EmailPayslipsView.as_view(), name='email-payslips'),

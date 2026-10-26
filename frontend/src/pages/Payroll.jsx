@@ -34,6 +34,8 @@ export default function Payroll() {
   const [payslipFilter, setPayslipFilter] = useState('');
   const [approvingId, setApprovingId] = useState(null);
   const [pendingGaps, setPendingGaps] = useState(null);
+  const [previewingId, setPreviewingId] = useState(null);
+  const [previews, setPreviews] = useState({});
 
   function load() {
     setLoading(true);
@@ -66,6 +68,14 @@ export default function Payroll() {
     try { await api.post(`/payroll/runs/${id}/process/`, {}); load(); }
     catch (err) { setError(err.message || 'Failed to process payroll.'); }
     finally { setProcessingId(null); }
+  }
+  async function previewRun(id) {
+    setError(''); setPreviewingId(id);
+    try {
+      const result = await api.post(`/payroll/runs/${id}/preview/`, {});
+      setPreviews((current) => ({ ...current, [id]: result }));
+    } catch (err) { setError(err.message || 'Failed to preview payroll.'); }
+    finally { setPreviewingId(null); }
   }
   // A run can be calculated but not trustworthy: statutory income tax may have
   // been impossible to apply, in which case the backend refuses approval with a
@@ -289,7 +299,10 @@ export default function Payroll() {
                   </div>
                 )}
                 <div className="payroll-run-actions">
-                  {run.status === 'draft' && <button className="btn btn-primary compact" disabled={processingId === run.id} onClick={() => processRun(run.id)}>{processingId === run.id ? 'Processing…' : 'Run payroll'}</button>}
+                  {run.status === 'draft' && <>
+                    <button className="btn btn-secondary compact" disabled={previewingId === run.id} onClick={() => previewRun(run.id)}>{previewingId === run.id ? 'Calculating…' : 'Preview'}</button>
+                    <button className="btn btn-primary compact" disabled={processingId === run.id} onClick={() => processRun(run.id)}>{processingId === run.id ? 'Processing…' : 'Process and lock'}</button>
+                  </>}
                   {run.status === 'processed' && (
                     <button className="btn btn-secondary compact" disabled={approvingId === run.id} onClick={() => approveRun(run.id)}>
                       {approvingId === run.id ? 'Approving…' : 'Approve'}
@@ -312,6 +325,13 @@ export default function Payroll() {
                     </>
                   )}
                 </div>
+                {previews[run.id] && (
+                  <div className="preview-panel">
+                    <div className="panel-head"><div><h3>Preview review</h3><p>{previews[run.id].summary.employee_count} active employees · rules version {previews[run.id].summary.configuration_version || 'current'}{previews[run.id].summary.configuration_effective_from ? ` effective ${previews[run.id].summary.configuration_effective_from}` : ''}</p></div><strong>{money(previews[run.id].summary.totals.net)} projected net</strong></div>
+                    <div className="preview-totals"><span>Gross <strong>{money(previews[run.id].summary.totals.gross)}</strong></span><span>Tax <strong>{money(previews[run.id].summary.totals.tax)}</strong></span><span>Contributions <strong>{money(previews[run.id].summary.totals.contributions)}</strong></span><span>Deductions <strong>{money(previews[run.id].summary.totals.deductions)}</strong></span></div>
+                    {previews[run.id].summary.exceptions.length ? <div className="compliance-gap-note"><strong>{previews[run.id].summary.exceptions.length} exception(s) need review</strong><ul>{previews[run.id].summary.exceptions.slice(0, 8).map((item, index) => <li key={`${item.type}-${item.employee_id}-${index}`}>{item.employee}: {item.message}</li>)}</ul></div> : <div className="alert alert-success">No unusual changes or payroll exceptions detected.</div>}
+                  </div>
+                )}
                 {expandedRun === run.id && (
                   <div style={{ margin: '0.5rem 0' }}>
                     <input

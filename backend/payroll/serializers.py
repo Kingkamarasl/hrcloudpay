@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from rest_framework import serializers
+from django.utils import timezone
 
 from .models import PayrollConfig, PayrollRun, Payslip, StatutoryContribution, TaxBracket
 
@@ -44,6 +45,7 @@ class PayrollConfigSerializer(serializers.ModelSerializer):
     """
     tax_brackets = TaxBracketSerializer(many=True)
     contributions = StatutoryContributionSerializer(many=True)
+    effective_from = serializers.DateField(write_only=True, required=False)
 
     class Meta:
         model = PayrollConfig
@@ -55,6 +57,7 @@ class PayrollConfigSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         tax_brackets_data = validated_data.pop('tax_brackets', [])
         contributions_data = validated_data.pop('contributions', [])
+        effective_from = validated_data.pop('effective_from', timezone.localdate())
         company = self.context['request'].user.company
 
         brackets = sorted(tax_brackets_data, key=lambda item: item['min_amount'])
@@ -75,6 +78,8 @@ class PayrollConfigSerializer(serializers.ModelSerializer):
             TaxBracket.objects.create(payroll_config=config, **bracket)
         for contribution in contributions_data:
             StatutoryContribution.objects.create(payroll_config=config, **contribution)
+        from .services import ensure_config_version
+        ensure_config_version(config, user=self.context['request'].user, effective_from=effective_from)
 
         company.payroll_configured = True
         company.save(update_fields=['payroll_configured'])
@@ -112,8 +117,8 @@ class PayrollRunSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = PayrollRun
-        fields = ['id', 'period_start', 'period_end', 'status', 'run_date', 'approved_at', 'approved_by', 'payslips', 'compliance_gaps']
-        read_only_fields = ['status', 'run_date', 'approved_at', 'approved_by', 'payslips', 'compliance_gaps']
+        fields = ['id', 'period_start', 'period_end', 'status', 'run_date', 'approved_at', 'approved_by', 'config_version', 'configuration_snapshot', 'previewed_at', 'preview_summary', 'payslips', 'compliance_gaps']
+        read_only_fields = ['status', 'run_date', 'approved_at', 'approved_by', 'config_version', 'configuration_snapshot', 'previewed_at', 'preview_summary', 'payslips', 'compliance_gaps']
 
     def get_compliance_gaps(self, run):
         """Surfaced on the run so the UI can warn *before* approval is attempted.

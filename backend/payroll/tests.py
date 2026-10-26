@@ -155,6 +155,37 @@ class PayrollAPITests(TestCase):
         self.assertEqual(pdf['Content-Type'], 'application/pdf')
         self.assertTrue(pdf.content.startswith(b'%PDF'))
 
+    def test_preview_returns_totals_and_does_not_create_payslips(self):
+        config = PayrollConfig.objects.create(company=self.company, currency='GNF')
+        TaxBracket.objects.create(payroll_config=config, min_amount=0, max_amount=None, rate=10)
+        Employee.objects.create(
+            company=self.company, employee_code='PREVIEW-1', first_name='Preview', last_name='Employee',
+            email='preview@example.com', base_salary=1000,
+        )
+        run = PayrollRun.objects.create(company=self.company, period_start=date(2026, 12, 1), period_end=date(2026, 12, 31))
+        response = self.client.post(f'/api/payroll/runs/{run.id}/preview/', {}, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['summary']['employee_count'], 1)
+        self.assertEqual(response.data['summary']['totals']['gross'], '1000.00')
+        self.assertEqual(response.data['summary']['totals']['net'], '900.00')
+        self.assertEqual(Payslip.objects.filter(payroll_run=run).count(), 0)
+        self.assertEqual(PayrollRun.objects.get(pk=run.id).status, 'draft')
+
+    def test_processing_persists_the_configuration_snapshot_used(self):
+        config = PayrollConfig.objects.create(company=self.company, currency='GNF')
+        TaxBracket.objects.create(payroll_config=config, min_amount=0, max_amount=None, rate=0)
+        Employee.objects.create(
+            company=self.company, employee_code='SNAP-1', first_name='Snapshot', last_name='Employee',
+            email='snapshot@example.com', base_salary=1000,
+        )
+        run = PayrollRun.objects.create(company=self.company, period_start=date(2027, 1, 1), period_end=date(2027, 1, 31))
+        response = self.client.post(f'/api/payroll/runs/{run.id}/process/', {}, format='json')
+        self.assertEqual(response.status_code, 200)
+        run.refresh_from_db()
+        self.assertIsNotNone(run.config_version_id)
+        self.assertEqual(run.configuration_snapshot['currency'], 'GNF')
+        self.assertEqual(run.configuration_snapshot['tax_brackets'][0]['rate'], '0.00')
+
     def test_approve_pay_and_export_payroll(self):
         config = PayrollConfig.objects.create(company=self.company, currency='GNF')
         TaxBracket.objects.create(payroll_config=config, min_amount=0, max_amount=None, rate=0)
