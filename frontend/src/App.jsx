@@ -20,6 +20,11 @@ const AttendanceGrid = lazy(() => import('./pages/AttendanceGrid'));
 const Biometrics = lazy(() => import('./pages/Biometrics'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const EmployeeDashboard = lazy(() => import('./pages/EmployeeDashboard'));
+const EmployeeMyProfile = lazy(() => import('./pages/EmployeeSelfService').then((m) => ({ default: m.EmployeeMyProfile })));
+const EmployeeMyPayslips = lazy(() => import('./pages/EmployeeSelfService').then((m) => ({ default: m.EmployeeMyPayslips })));
+const EmployeeMyAttendance = lazy(() => import('./pages/EmployeeSelfService').then((m) => ({ default: m.EmployeeMyAttendance })));
+const EmployeeMyLeave = lazy(() => import('./pages/EmployeeSelfService').then((m) => ({ default: m.EmployeeMyLeave })));
+const EmployeeMyDocuments = lazy(() => import('./pages/EmployeeSelfService').then((m) => ({ default: m.EmployeeMyDocuments })));
 const Departments = lazy(() => import('./pages/Departments'));
 const Employees = lazy(() => import('./pages/Employees'));
 const EmployeeProfile = lazy(() => import('./pages/EmployeeProfile'));
@@ -111,36 +116,41 @@ export default function App() {
                     >
                       <Route path="/dashboard" element={<DashboardRoute />} />
                       <Route path="/my-workspace" element={<RoleRoute roles={['employee']}><EmployeeDashboard /></RoleRoute>} />
-                      <Route path="/security-center" element={<SecurityCenter />} />
-                      <Route path="/ai" element={<AIAssistant />} />
+                      <Route path="/my-profile" element={<RoleRoute roles={['employee']}><EmployeeMyProfile /></RoleRoute>} />
+                      <Route path="/my-payslips" element={<RoleRoute roles={['employee']}><EmployeeMyPayslips /></RoleRoute>} />
+                      <Route path="/my-attendance" element={<RoleRoute roles={['employee']}><EmployeeMyAttendance /></RoleRoute>} />
+                      <Route path="/my-leave" element={<RoleRoute roles={['employee']}><EmployeeMyLeave /></RoleRoute>} />
+                      <Route path="/my-documents" element={<RoleRoute roles={['employee']}><EmployeeMyDocuments /></RoleRoute>} />
+                      <Route path="/security-center" element={<RoleRoute roles={['owner','admin']}><SecurityCenter /></RoleRoute>} />
+                      <Route path="/ai" element={<RoleRoute roles={['owner','admin','hr','finance','department_manager']}><AIAssistant /></RoleRoute>} />
                       <Route path="/ai-drafts" element={<RoleRoute roles={DRAFT_MANAGER_ROLES}><AIDrafts /></RoleRoute>} />
                         <Route path="/knowledge" element={<RoleRoute roles={KNOWLEDGE_MANAGER_ROLES}><KnowledgeCenter /></RoleRoute>} />
-                      <Route path="/employee-operations" element={<OperationsHub type="employee" />} />
-                      <Route path="/payroll-operations" element={<OperationsHub type="payroll" />} />
-                      <Route path="/workforce-operations" element={<OperationsHub type="leave" />} />
-                      <Route path="/employees" element={<Employees />} />
-                      <Route path="/employees/:id" element={<EmployeeProfile />} />
-                      <Route path="/departments" element={<Departments />} />
-                      <Route path="/payroll" element={<Payroll />} />
-                      <Route path="/payroll-dashboard" element={<PayrollDashboard />} />
-                      <Route path="/payroll-setup" element={<PayrollSetup />} />
-                      <Route path="/payroll-extras" element={<PayrollExtras />} />
-                      <Route path="/attendance" element={<Attendance />} />
+                      <Route path="/employee-operations" element={<RoleRoute roles={['owner','admin','hr','department_manager']}><OperationsHub type="employee" /></RoleRoute>} />
+                      <Route path="/payroll-operations" element={<RoleRoute roles={['owner','admin','finance']}><OperationsHub type="payroll" /></RoleRoute>} />
+                      <Route path="/workforce-operations" element={<RoleRoute roles={['owner','admin','hr','department_manager']}><OperationsHub type="leave" /></RoleRoute>} />
+                      <Route path="/employees" element={<RoleRoute roles={['owner','admin','hr','department_manager']}><Employees /></RoleRoute>} />
+                      <Route path="/employees/:id" element={<RoleRoute roles={['owner','admin','hr','department_manager']}><EmployeeProfile /></RoleRoute>} />
+                      <Route path="/departments" element={<RoleRoute roles={['owner','admin','hr','department_manager']}><Departments /></RoleRoute>} />
+                      <Route path="/payroll" element={<RoleRoute roles={['owner','admin','finance']}><Payroll /></RoleRoute>} />
+                      <Route path="/payroll-dashboard" element={<RoleRoute roles={['owner','admin','finance']}><PayrollDashboard /></RoleRoute>} />
+                      <Route path="/payroll-setup" element={<RoleRoute roles={['owner','admin','finance']}><PayrollSetup /></RoleRoute>} />
+                      <Route path="/payroll-extras" element={<RoleRoute roles={['owner','admin','finance']}><PayrollExtras /></RoleRoute>} />
+                      <Route path="/attendance" element={<RoleRoute roles={['owner','admin','hr','department_manager']}><Attendance /></RoleRoute>} />
                         <Route path="/attendance-grid" element={<RoleRoute roles={['owner','admin','hr','department_manager']}><AttendanceGrid /></RoleRoute>} />
                         <Route path="/biometrics" element={<RoleRoute roles={['owner','admin','hr']}><Biometrics /></RoleRoute>} />
-                      <Route path="/leave" element={<LeaveRequests />} />
-                      <Route path="/leave-accrual" element={<LeaveAccrual />} />
-                      <Route path="/team" element={<Team />} />
+                      <Route path="/leave" element={<RoleRoute roles={['owner','admin','hr','department_manager']}><LeaveRequests /></RoleRoute>} />
+                      <Route path="/leave-accrual" element={<RoleRoute roles={['owner','admin','hr']}><LeaveAccrual /></RoleRoute>} />
+                      <Route path="/team" element={<RoleRoute roles={['owner','admin']}><Team /></RoleRoute>} />
                       <Route path="/request-tracking" element={<RequestTracking />} />
-                      <Route path="/audit-logs" element={<AuditLogs />} />
-                      <Route path="/billing" element={<Billing />} />
-                      <Route path="/billing/success" element={<Billing />} />
-                      <Route path="/company-settings" element={<CompanySettings />} />
-                      <Route path="/integrations" element={<Integrations />} />
-                      <Route path="/compliance" element={<Compliance />} />
-                      <Route path="/statutory-compliance" element={<StatutoryCompliance />} />
-                      <Route path="/workflows" element={<Workflows />} />
-                      <Route path="/country-setup" element={<RegionalOnboarding />} />
+                      <Route path="/audit-logs" element={<RoleRoute roles={['owner','admin','hr','finance']}><AuditLogs /></RoleRoute>} />
+                      <Route path="/billing" element={<RoleRoute roles={['owner','admin']}><Billing /></RoleRoute>} />
+                      <Route path="/billing/success" element={<RoleRoute roles={['owner','admin']}><Billing /></RoleRoute>} />
+                      <Route path="/company-settings" element={<RoleRoute roles={['owner','admin']}><CompanySettings /></RoleRoute>} />
+                      <Route path="/integrations" element={<RoleRoute roles={['owner','admin','hr']}><Integrations /></RoleRoute>} />
+                      <Route path="/compliance" element={<RoleRoute roles={['owner','admin','hr','department_manager']}><Compliance /></RoleRoute>} />
+                      <Route path="/statutory-compliance" element={<RoleRoute roles={['owner','admin','finance','hr']}><StatutoryCompliance /></RoleRoute>} />
+                      <Route path="/workflows" element={<RoleRoute roles={['owner','admin','hr']}><Workflows /></RoleRoute>} />
+                      <Route path="/country-setup" element={<RoleRoute roles={['owner','admin','hr']}><RegionalOnboarding /></RoleRoute>} />
                     </Route>
 
                     <Route

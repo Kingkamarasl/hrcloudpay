@@ -18,12 +18,13 @@ export default function Navbar({ onMenuClick, onSearchClick }: NavbarProps) {
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (user?.role === 'employee') return undefined;
     let alive = true;
     api.get<{ count: number }>('/workflows/notifications/unread_count/')
       .then((x) => alive && setCount(x.count || 0))
       .catch(() => {});
     return () => { alive = false; };
-  }, []);
+  }, [user?.role]);
 
   useEffect(() => {
     if (!menuOpen) return undefined;
@@ -55,7 +56,7 @@ export default function Navbar({ onMenuClick, onSearchClick }: NavbarProps) {
         <button type="button" className="icon-btn" onClick={toggle} title={theme === 'dark' ? 'Light mode' : 'Dark mode'} aria-label="Toggle theme">
           <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={18} />
         </button>
-        <Link to="/workflows" className="icon-btn" title="Notifications">
+        <Link to={isEmployee ? '/request-tracking' : '/workflows'} className="icon-btn" title="Notifications">
           <Icon name="bell" />
           {count > 0 && <span className="notification-dot">{count > 99 ? '99+' : count}</span>}
         </Link>
@@ -76,7 +77,7 @@ export default function Navbar({ onMenuClick, onSearchClick }: NavbarProps) {
                 <small>{user?.email || user?.company?.name}</small>
               </div>
               {isEmployee ? (
-                <Link to="/my-workspace" className="user-dropdown-item" onClick={() => setMenuOpen(false)}>
+                <Link to="/my-profile" className="user-dropdown-item" onClick={() => setMenuOpen(false)}>
                   <Icon name="user" size={16} /> My profile
                 </Link>
               ) : (

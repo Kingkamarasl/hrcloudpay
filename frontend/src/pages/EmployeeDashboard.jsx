@@ -84,8 +84,8 @@ export default function EmployeeDashboard() {
           <p>Keep track of your profile, attendance, leave, and payslips in one place.</p>
         </div>
         <div className="dash-actions">
-          <Link to="/leave" className="btn btn-primary compact">Request leave <Icon name="arrow" size={16} /></Link>
-          <Link to="/attendance" className="btn btn-secondary compact">View attendance</Link>
+          <Link to="/my-leave" className="btn btn-primary compact">Request leave <Icon name="arrow" size={16} /></Link>
+          <Link to="/my-attendance" className="btn btn-secondary compact">View attendance</Link>
         </div>
       </section>
 
@@ -119,20 +119,20 @@ export default function EmployeeDashboard() {
             </section>
 
             <section className="panel">
-              <div className="panel-head"><div><h2>My leave</h2><p>Recent requests and decisions</p></div><Link to="/leave">Open leave <Icon name="arrow" size={14} /></Link></div>
+              <div className="panel-head"><div><h2>My leave</h2><p>Recent requests and decisions</p></div><Link to="/my-leave">Open leave <Icon name="arrow" size={14} /></Link></div>
               {recentLeave.length ? (
                 <div className="activity-list">
                   {recentLeave.map((item) => <div className="activity-row" key={item.id}><div className="activity-icon"><Icon name="calendar" size={16} /></div><div><strong>{item.start_date} → {item.end_date}</strong><small>{item.leave_type || 'Leave request'}</small></div><span className={`badge badge-${item.status}`}>{item.status}</span></div>)}
                 </div>
-              ) : <EmptyState icon="calendar" title="No leave requests" description="Submit a leave request when you need time away." actionLabel="Request leave" actionTo="/leave" />}
+              ) : <EmptyState icon="calendar" title="No leave requests" description="Submit a leave request when you need time away." actionLabel="Request leave" actionTo="/my-leave" />}
             </section>
           </div>
 
           <section className="panel">
-            <div className="panel-head"><div><h2>Recent attendance</h2><p>Your latest recorded attendance</p></div><Link to="/attendance">View all <Icon name="arrow" size={14} /></Link></div>
+            <div className="panel-head"><div><h2>Recent attendance</h2><p>Your latest recorded attendance</p></div><Link to="/my-attendance">View all <Icon name="arrow" size={14} /></Link></div>
             {recentAttendance.length ? (
               <div className="table-wrap"><table className="modern-table"><thead><tr><th>Date</th><th>Status</th><th>Clock in</th><th>Clock out</th><th>Worked</th></tr></thead><tbody>{recentAttendance.map((item) => <tr key={item.id}><td>{item.date}</td><td><span className={`badge badge-${item.status}`}>{item.status}</span></td><td>{item.check_in || '—'}</td><td>{item.check_out || '—'}</td><td>{item.worked_minutes != null ? `${Math.floor(item.worked_minutes / 60)}h ${item.worked_minutes % 60}m` : '—'}</td></tr>)}</tbody></table></div>
-            ) : <EmptyState icon="clock" title="No attendance records" description="Your attendance history will appear here." actionLabel="Open attendance" actionTo="/attendance" />}
+            ) : <EmptyState icon="clock" title="No attendance records" description="Your attendance history will appear here." actionLabel="Open attendance" actionTo="/my-attendance" />}
           </section>
         </>
       )}

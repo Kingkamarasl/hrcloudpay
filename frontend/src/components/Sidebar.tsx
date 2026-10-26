@@ -25,7 +25,8 @@ const GROUPS: NavGroup[] = [
     { to: '/knowledge', label: 'Knowledge Center', icon: 'file', roles: KNOWLEDGE_MANAGER_ROLES },
   ] },
   { title: 'People', links: [
-    { to: '/my-workspace', label: 'My profile', icon: 'user', roles: ['employee'] },
+    { to: '/my-profile', label: 'My profile', icon: 'user', roles: ['employee'] },
+    { to: '/my-documents', label: 'My documents', icon: 'file', roles: ['employee'] },
     { to: '/employees', label: 'Employees', icon: 'users', roles: ['owner','admin','hr','department_manager'] },
     { to: '/request-tracking', label: 'Request tracking', icon: 'bell', roles: ['owner','admin','hr','department_manager','employee'] },
     { to: '/departments', label: 'Departments', icon: 'building', roles: ['owner','admin','hr','department_manager'] },
@@ -41,11 +42,13 @@ const GROUPS: NavGroup[] = [
   ]},
   { title: 'Security', links: [{ to: '/security-center', label: 'Security Center', icon: 'shield', roles: ['owner','admin'] }] },
   { title: 'Operations', links: [
-    { to: '/attendance', label: 'Attendance', icon: 'clock' },
+    { to: '/my-attendance', label: 'My attendance', icon: 'clock', roles: ['employee'] },
+    { to: '/my-leave', label: 'My leave', icon: 'calendar', roles: ['employee'] },
+    { to: '/attendance', label: 'Attendance', icon: 'clock', roles: ['owner','admin','hr','department_manager'] },
     { to: '/attendance-grid', label: 'Attendance grid', icon: 'grid', roles: ['owner','admin','hr','department_manager'] },
     { to: '/biometrics', label: 'Biometric terminals', icon: 'shield', roles: ['owner','admin','hr'] },
     { to: '/leave-accrual', label: 'Leave accruals', icon: 'calendar', roles: ['owner','admin','hr'] },
-    { to: '/leave', label: 'Leave & breaks', icon: 'calendar' },
+    { to: '/leave', label: 'Leave & breaks', icon: 'calendar', roles: ['owner','admin','hr','department_manager'] },
     { to: '/audit-logs', label: 'Audit trail', icon: 'shield', roles: ['owner','admin','hr','finance'] },
   ]},
   { title: 'Payroll', links: [
