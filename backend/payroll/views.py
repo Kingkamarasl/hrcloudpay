@@ -11,7 +11,9 @@ from rest_framework.response import Response
 from rest_framework import serializers
 from rest_framework.views import APIView
 
-from accounts.permissions import CanManagePayroll, IsCompanyActive, IsCompanyMember
+from accounts.permissions import (
+    CanManagePayroll, CanViewPayslips, IsCompanyActive, IsCompanyMember,
+)
 from accounts.audit import audit
 from security.step_up import RequiresFreshMfa
 from employees.models import Employee
@@ -320,13 +322,16 @@ class PayrollDashboardView(APIView):
 
 class PayslipViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = PayslipSerializer
-    permission_classes = [IsCompanyMember, IsCompanyActive]
+    permission_classes = [IsCompanyMember, IsCompanyActive, CanViewPayslips]
 
     def get_queryset(self):
-        qs = Payslip.objects.filter(payroll_run__company=self.request.user.company)
-        # Employee-role users (self-service portal) only ever see their own payslips
-        if self.request.user.role == 'employee' and hasattr(self.request.user, 'employee_profile'):
-            qs = qs.filter(employee=self.request.user.employee_profile)
+        user = self.request.user
+        qs = Payslip.objects.filter(payroll_run__company=user.company)
+        if user.role == 'employee':
+            employee_id = user.employee_id
+            if employee_id is None:
+                return qs.none()
+            qs = qs.filter(employee_id=employee_id, employee__company_id=user.company_id)
         return qs
 
     def retrieve(self, request, *args, **kwargs):

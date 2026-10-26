@@ -8,7 +8,7 @@ from rest_framework.test import APIClient
 from accounts.models import Company, User
 from accounts.platform_models import Subscription
 from employees.models import Employee
-from payroll.models import PayrollConfig, PayrollRun, StatutoryContribution, TaxBracket
+from payroll.models import Payslip, PayrollConfig, PayrollRun, StatutoryContribution, TaxBracket
 from payroll.services import calculate_payslip, calculate_progressive_tax
 
 
@@ -47,6 +47,27 @@ class PayrollAPITests(TestCase):
             company=self.company, role='owner',
         )
         self.client.force_authenticate(self.user)
+
+    def _employee_with_user(self, username, code):
+        user = User.objects.create_user(
+            username=username, email=f'{username}@example.com',
+            password='StrongPassword123!', company=self.company, role='employee',
+        )
+        employee = Employee.objects.create(
+            company=self.company, user=user, employee_code=code,
+            first_name=username, last_name='Employee', email=f'{code}@example.com',
+        )
+        return user, employee
+
+    def _payslip(self, employee, period_start, period_end):
+        run = PayrollRun.objects.create(
+            company=employee.company, period_start=period_start, period_end=period_end,
+        )
+        return Payslip.objects.create(
+            payroll_run=run, employee=employee,
+            base_salary=Decimal('1000.00'), gross_salary=Decimal('1000.00'),
+            net_salary=Decimal('900.00'),
+        )
 
     def _stepped_up_session(self):
         """Create a SecuritySession already stamped as freshly MFA-verified."""
@@ -124,3 +145,57 @@ class PayrollAPITests(TestCase):
         export = self.client.get('/api/payroll/export/')
         self.assertEqual(export.status_code, 200)
         self.assertIn(b'BANK-001', export.content)
+
+    def test_employee_can_only_list_and_retrieve_their_own_payslips(self):
+        employee_user, employee = self._employee_with_user('self-service', 'E-SELF')
+        _, coworker = self._employee_with_user('coworker', 'E-COWORKER')
+        own_slip = self._payslip(employee, date(2026, 11, 1), date(2026, 11, 30))
+        coworker_slip = self._payslip(coworker, date(2026, 12, 1), date(2026, 12, 31))
+        self.client.force_authenticate(employee_user)
+
+        response = self.client.get('/api/payroll/payslips/')
+
+        self.assertEqual(response.status_code, 200)
+        items = response.data.get('results', response.data)
+        self.assertEqual([item['id'] for item in items], [own_slip.id])
+        self.assertEqual(
+            self.client.get(f'/api/payroll/payslips/{coworker_slip.id}/').status_code,
+            404,
+        )
+
+    def test_employee_without_a_linked_profile_is_denied_payslips(self):
+        unlinked = User.objects.create_user(
+            username='unlinked-employee', email='unlinked@example.com',
+            password='StrongPassword123!', company=self.company, role='employee',
+        )
+        self.client.force_authenticate(unlinked)
+
+        response = self.client.get('/api/payroll/payslips/')
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_hr_and_department_manager_cannot_read_company_payslips(self):
+        for role in ('hr', 'department_manager'):
+            with self.subTest(role=role):
+                user = User.objects.create_user(
+                    username=f'{role}-viewer', email=f'{role}@example.com',
+                    password='StrongPassword123!', company=self.company, role=role,
+                )
+                self.client.force_authenticate(user)
+                response = self.client.get('/api/payroll/payslips/')
+                self.assertEqual(response.status_code, 403)
+
+    def test_finance_can_read_company_payslips(self):
+        _, employee = self._employee_with_user('payroll-employee', 'E-PAYROLL')
+        self._payslip(employee, date(2026, 11, 1), date(2026, 11, 30))
+        finance = User.objects.create_user(
+            username='finance-viewer', email='finance@example.com',
+            password='StrongPassword123!', company=self.company, role='finance',
+        )
+        self.client.force_authenticate(finance)
+
+        response = self.client.get('/api/payroll/payslips/')
+
+        self.assertEqual(response.status_code, 200)
+        items = response.data.get('results', response.data)
+        self.assertEqual(len(items), 1)

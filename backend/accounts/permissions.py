@@ -238,6 +238,27 @@ class CanManagePayroll(BasePermission):
         )
 
 
+class CanViewPayslips(BasePermission):
+    """Company payroll roles see all slips; employees see only their own.
+
+    The queryset applies the row-level employee restriction. This permission
+    ensures unrelated company roles, and employee accounts without a valid
+    same-company profile, cannot use the payslip endpoint at all.
+    """
+
+    message = 'You do not have permission to view these payslips.'
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not (user and user.is_authenticated and user.company_id is not None):
+            return False
+        if user.role in ('owner', 'admin', 'finance'):
+            return True
+        if user.role != 'employee' or user.employee_id is None:
+            return False
+        return user.employee_profile.company_id == user.company_id
+
+
 class CanViewCompanyAudit(BasePermission):
     """Sensitive company audit trail: owner/admin/HR/finance only."""
     def has_permission(self, request, view):
