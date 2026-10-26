@@ -37,16 +37,16 @@ def png_bytes():
 
 def build_pdf(pages):
     """Build a real PDF. Each page is 'text' or 'image'."""
-    import fitz
+    import pymupdf
 
-    document = fitz.open()
+    document = pymupdf.open()
     for kind in pages:
         page = document.new_page()
         if kind == 'text':
             page.insert_text((72, 96), 'Annual leave is 25 days per year.',
                              fontsize=12)
         elif kind == 'image':
-            page.insert_image(fitz.Rect(40, 40, 200, 200), stream=png_bytes())
+            page.insert_image(pymupdf.Rect(40, 40, 200, 200), stream=png_bytes())
         elif kind == 'blank':
             pass
         else:

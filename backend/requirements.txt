@@ -1,8 +1,8 @@
-Django>=5.2,<5.3
+Django>=6.1,<6.2
 djangorestframework>=3.18,<3.19
 django-cors-headers>=4.3
 python-decouple>=3.8
-reportlab>=4.2,<5
+reportlab>=5.1,<6
 whitenoise>=6.7,<7
 
 # Production database driver. `binary` ships prebuilt wheels so a deploy image
@@ -14,13 +14,13 @@ psycopg[binary]>=3.2,<4
 # WSGI server. The README's release order runs `gunicorn hrcloudpay.wsgi`, but
 # gunicorn was not listed here, so a clean `pip install -r requirements.txt`
 # produced an image with no way to serve the app at all.
-gunicorn>=23,<24
+gunicorn>=26,<27
 
 # Shared cache backend. DRF's throttling stores its counters in the default
 # cache, which is per-process (LocMemCache) unless REDIS_URL is set. Running
 # more than one worker therefore multiplies every rate limit by the worker
 # count - the login limit of 10/minute becomes 10/minute *per worker*.
-redis>=5,<7
+redis>=8,<9
 
 # S3-backed file storage. MEDIA_ROOT is a local directory, so on a container
 # platform every deploy destroys every file uploaded since the last one. Only
@@ -28,18 +28,18 @@ redis>=5,<7
 # staticfiles deliberately stays on the local backend.
 django-storages[boto3]>=1.14,<2
 
-cryptography>=43,<46
+cryptography>=50,<51
 
-django-unfold>=0.91.0,<0.100.0
+django-unfold>=0.110.0,<0.200.0
 
 openpyxl>=3.1,<4
-Pillow>=10.0,<12
+Pillow>=13,<14
 
 pypdf>=5.0,<7
 python-docx>=1.1,<2
 
 # Optional OCR for scanned/image-only PDFs (server must also have Tesseract installed)
-pymupdf>=1.24,<2
+pymupdf>=2.0,<3
 pytesseract>=0.3.13,<0.4
 
 # API documentation

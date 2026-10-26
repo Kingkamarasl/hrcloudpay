@@ -16,7 +16,7 @@ COPY frontend/ ./
 RUN npm run build -- --outDir /app/frontend/dist
 
 # --- Stage 2: install Python dependencies ------------------------------------
-FROM python:3.11-slim AS deps-builder
+FROM python:3.13-slim AS deps-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc \
@@ -31,7 +31,7 @@ COPY backend/requirements.txt ./
 RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # --- Stage 3: runtime -------------------------------------------------------
-FROM python:3.11-slim AS backend
+FROM python:3.13-slim AS backend
 
 # tesseract-ocr is the point of building an image rather than using a PaaS's
 # language runtime: pytesseract is a wrapper around this binary, so without it

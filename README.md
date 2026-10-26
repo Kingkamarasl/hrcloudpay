@@ -90,7 +90,8 @@ hrcloudpay/
 
 ## Running the backend
 
-Requires Python 3.11+.
+Requires Python 3.13+ (Django 6.1 needs at least 3.12; the Docker image and CI
+both run 3.13).
 
 ```bash
 cd backend

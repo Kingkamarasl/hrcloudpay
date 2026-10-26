@@ -19,7 +19,7 @@ def _open_for_ocr(uploaded_file):
     host without PyMuPDF should still be able to read digital documents.
     """
     try:
-        import fitz
+        import pymupdf
     except ImportError:
         return None, (
             'This server cannot read scanned pages: the PyMuPDF library is not '
@@ -28,7 +28,7 @@ def _open_for_ocr(uploaded_file):
 
     try:
         uploaded_file.seek(0)
-        return fitz.open(stream=uploaded_file.read(), filetype='pdf'), None
+        return pymupdf.open(stream=uploaded_file.read(), filetype='pdf'), None
     except Exception as exc:
         return None, 'The PDF could not be opened for scanning (%s).' % type(exc).__name__
 
@@ -49,11 +49,11 @@ def _ocr_page(pdf, index):
         return '', OCR_UNAVAILABLE
 
     try:
-        import fitz
+        import pymupdf
         from PIL import Image
         import io
 
-        pix = pdf[index].get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+        pix = pdf[index].get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False)
         image = Image.open(io.BytesIO(pix.tobytes('png')))
         return (pytesseract.image_to_string(image) or '').strip(), None
     except pytesseract.TesseractNotFoundError:
