@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { api, downloadFile } from '../api/client';
 import Icon from '../components/Icon';
 import EmptyState from '../components/EmptyState';

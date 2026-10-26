@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { api, downloadFile } from '../api/client';
 import { withStepUp } from '../api/stepUp';
 import Icon from '../components/Icon';

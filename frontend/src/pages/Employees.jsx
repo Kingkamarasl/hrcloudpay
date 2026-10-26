@@ -1,4 +1,4 @@
-import {Link} from 'react-router-dom';
+import {Link} from 'react-router';
 import {useEffect,useMemo,useState} from 'react';
 import {api} from '../api/client';
 import Icon from '../components/Icon';

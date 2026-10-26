@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import Icon from './Icon';
 import { AI_MINIMUM_PLAN, PLAN_LABELS } from '../constants/plans';
 

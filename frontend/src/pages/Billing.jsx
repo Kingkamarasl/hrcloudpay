@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router';
 import { api } from '../api/client';
 import ConfirmModal from '../components/ConfirmModal';
 import { PLAN_ORDER, isDowngradeFrom, isUpgradeFrom, planLabel, sortPlans } from '../constants/plans';

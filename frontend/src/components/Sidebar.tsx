@@ -1,4 +1,4 @@
-import { NavLink, Link } from 'react-router-dom';
+import { NavLink, Link } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { KNOWLEDGE_MANAGER_ROLES, DRAFT_MANAGER_ROLES } from '../constants/roles';
 import Icon from './Icon';

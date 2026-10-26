@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router';
 import { api, downloadFile } from '../api/client';
 import Icon from '../components/Icon';
 import { money, sumMoney } from '../utils/money';

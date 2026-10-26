@@ -1,5 +1,5 @@
 import {useEffect,useState} from 'react';
-import {Link} from 'react-router-dom';
+import {Link} from 'react-router';
 import {api} from '../api/client';
 import Icon from '../components/Icon';
 const tabs=[['tasks','Tasks'],['notifications','Notifications'],['rules','Automation rules']];

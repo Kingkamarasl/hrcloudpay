@@ -1,5 +1,5 @@
 import Icon from './Icon';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 
 interface EmptyStateProps {
   icon?: string;
