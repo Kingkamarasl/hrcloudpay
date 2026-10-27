@@ -2,62 +2,59 @@
 
 Simple, affordable HR and payroll system built for African businesses.
 
-This is an MVP starter codebase: **Django REST Framework backend + React (Vite) frontend**.
-It implements the core flow discussed:
+HRCloudPay is an actively developed, multi-tenant HR, payroll, and workforce
+operations platform—not a starter template. The product combines People,
+Payroll, Attendance, Leave, Compliance, AI-enabled knowledge tools, integrations,
+and SaaS operations in a Django REST Framework backend and React web application.
 
-1. A business registers a company account.
-2. They activate it via an emailed link.
-3. Immediately after activation, they fill in a **Payroll Setup** form declaring
-   their own country's tax brackets, statutory contributions (pension, social
-   security, etc.), currency, and pay frequency — no country is hardcoded.
-4. From then on, payroll is calculated automatically using *that company's own
-   configuration*, so the same codebase serves a business in Guinea, Nigeria,
-   Kenya, or anywhere else in Africa without code changes.
+Payroll can use effective-dated regional rules where verified or a company's
+own payroll configuration. Unsupported or unseeded statutory rules are surfaced
+as compliance gaps rather than guessed. Country coverage in the codebase does
+not, by itself, mean that every country's rates have been verified.
 
-## What's implemented (Starter/Business tier features)
+## Recent product progress
 
-- Company registration + email activation. **There is no public/independent
-  user signup beyond this** — every other login (Admin, HR Manager, Finance
-  Manager, Department Manager, Employee) is created by an owner/admin from
-  the **Team Accounts** screen, under that company only.
-- Role-based access control with five roles beyond the company owner:
-  - **Admin** — same access as owner
-  - **HR Manager** — manages employees, contracts, allowances/deductions,
-    attendance, and leave company-wide; no payroll/financial access
-  - **Finance Manager** — manages payroll setup, runs, approvals, payments,
-    exports, and reports; no employee-record editing access
-  - **Department Manager** — HR-lite access scoped only to employees in
-    their assigned department (attendance, leave approval)
-  - **Employee** — self-service only: their own profile, attendance, leave,
-    and payslips, linked to a specific Employee record
-- Token-based authentication (login/logout)
-- Per-company **Payroll Setup** onboarding (currency, pay frequency, progressive
-  tax brackets, statutory contributions — employee/employer split)
-- Employee management (CRUD), with per-employee allowances & deductions
-- Contracts (linked to employees, with file upload support)
-- Payroll runs: create a run for a period, then "Run payroll" to auto-generate
-  a payslip per active employee using the progressive tax + contributions engine
-- Payroll approval and payment recording with payment method and reference
-- Payroll CSV export and summary totals for gross, tax, contributions, deductions, and net
-- Payroll dashboard with charts (amount by employee, pay-date trends, department
-  breakdown, employer funding cost, recent runs table) — Finance/owner/admin only
-- Payroll validation: rejects invalid tax brackets, invalid rates, reversed periods,
-  and duplicate payroll periods; processing is atomic and protected against repeats
-- Payslip PDF downloads from the payroll screen and authenticated API
-- Attendance tracking, with Department Managers restricted to their own team
-- Leave requests with approve/reject actions, department-scoped for Department Managers
-- Plan-based employee limits (Starter 10 / Business 50 / Professional 150 / Enterprise unlimited)
+- **Employee self-service:** employee workspace and pages for profile, documents,
+  attendance, leave requests, and personal payslips.
+- **Attendance operations:** monthly attendance grid plus biometric device
+  registration, enrollment references, and authenticated punch ingestion.
+- **Payroll controls:** preview before processing, effective-dated configuration
+  snapshots, and idempotent payroll mutations to make retries safer.
+- **Reliable workflows:** onboarding, contract, compliance, and leave tasks and
+  notifications, backed by a durable email outbox with bounded retries.
+- **Platform modernization:** Python 3.13 / Django 6.1 and React 19 / Vite 8,
+  with CI and the production Docker build using current runtimes.
 
-## Not yet built (natural next steps)
+## Current capabilities
 
-- Email notifications beyond the activation email (e.g. payslip ready, leave approved,
-  "your team account was created")
-- Mobile-friendly employee self-service portal UI (backend scoping already supports it)
-- Payment integration with mobile money / bank rails
-- A real Department model (departments are currently a free-text field on Employee,
-  matched by exact string against a Department Manager's `managed_department` — fine
-  for an MVP, but worth normalizing into its own model once departments need their
-  own settings or a company has many of them)
+- Company registration and activation; company owners/admins create and manage
+  team accounts within their tenant.
+- Role-based access for Owner/Admin, HR Manager, Finance Manager, Department
+  Manager, and Employee. Employee access is scoped to the linked employee record.
+- Secure browser sessions with HttpOnly cookies and CSRF protection, token
+  authentication for non-browser clients, MFA support, and audit logging.
+- Employee records, company-scoped departments, contracts, allowances and
+  deductions, employee documents, compliance requirements, and Employee 360°.
+- Employee web self-service for their profile, shared documents, attendance,
+  leave requests, and payslips/PDF downloads.
+- Attendance records, department-scoped team views, and biometric terminal
+  ingestion; biometric templates remain on the device.
+- Leave requests, approvals, accruals, encashments, and workflow automation.
+- Payroll setup and configuration snapshots; preview, processing, approval, and
+  payment recording; payslip PDFs, CSV exports, and finance dashboards.
+- Company knowledge and AI document workflows, including document extraction,
+  OCR, and source-grounded retrieval; OAuth/sync foundations for external tools.
+- Subscription, billing, plan limits, and platform administration.
+
+## Delivery boundaries
+
+- Payroll records payment status and references, but the application does not
+  itself send payroll funds through mobile-money or bank payout rails.
+- Employee self-service is available in the web app; a dedicated native Android
+  or iOS application is not included.
+- Regional statutory rules require verified, effective-dated data. Countries
+  without seeded verified rules remain blocked for statutory approval; validate
+  local requirements before relying on payroll outputs.
 
 ## Roles reference
 
@@ -76,16 +73,20 @@ Accounts for every role except Owner are created via `POST /api/auth/users/`
 
 ```
 hrcloudpay/
-  backend/         Django + DRF API
-    accounts/      Company + custom User model, register/activate/login
-    employees/     Employee, Contract, Allowance, Deduction
-    payroll/       PayrollConfig (per-company tax/contribution rules),
-                    calculation engine (services.py), PayrollRun, Payslip
-    attendance/     Attendance records
-    leave/          Leave requests + approve/reject
-  frontend/        React (Vite) SPA
-    src/pages/      Login, Register, Activate, PayrollSetup, Dashboard,
-                    Employees, Payroll, Attendance, LeaveRequests
+  backend/         Django + DRF multi-tenant API
+    accounts/      Companies, users, billing, and platform administration
+    security/      MFA, sessions, security events, and access controls
+    employees/     Employee records, departments, contracts, and documents
+    attendance/    Attendance records and monthly grid
+    biometrics/    Device enrollment and punch ingestion
+    payroll/       Payroll rules, snapshots, previews, runs, and payslips
+    regional/      Country profiles, statutory rules, and compliance checks
+    leave/         Leave requests, accruals, and encashments
+    workflows/     Tasks, notifications, and automation
+    ai/            Knowledge retrieval and document intelligence
+    integrations/  OAuth connections and external sync workflows
+  frontend/        React 19 + Vite web application
+    src/pages/      Admin/HR/Finance workspaces and employee self-service
 ```
 
 ## Running the backend
@@ -115,11 +116,11 @@ registering, check your terminal output for the activation link.
 
 ## Running the frontend
 
-Requires Node.js 18+.
+Requires Node.js >=22.22.0. Node 24 matches CI and the production Docker build.
 
 ```bash
 cd frontend
-npm install
+npm ci
 cp .env.example .env    # defaults to http://localhost:8000/api, adjust if needed
 npm run dev
 ```
@@ -133,7 +134,7 @@ servers, build the frontend and let Django serve it directly:
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run build          # builds into backend/frontend_dist/
 
 cd ../backend
@@ -167,33 +168,46 @@ want to test or deploy the whole thing as one unit.
 
 ## Running tests
 
-From the `backend` directory:
+From the repository root, install and validate the frontend first. Building it
+also provides the SPA bundle used by backend route and cache integration tests.
 
 ```bash
+npm ci --prefix frontend
+npm --prefix frontend run typecheck
+npm --prefix frontend run test:run
+npm --prefix frontend run build
+
+cd backend
 python manage.py test
 ```
 
-The test suite covers progressive tax, contributions, invalid periods, duplicate
-period protection, payroll processing, and PDF generation.
+CI additionally runs Django checks and migrations against PostgreSQL and Redis.
+The automated suites cover API permissions, tenant boundaries, payroll and
+regional compliance, workflows, security, frontend behavior, and more.
 
 ## A note on the payroll engine
 
-`backend/payroll/services.py` is deliberately country-agnostic. It never
-references a specific country's tax law — it just applies whatever tax
-brackets and contribution rates the company itself declared during onboarding.
-This is what lets HRCLOUDPAY serve the whole African market from one codebase
-instead of maintaining separate logic per country. If you later want to speed
-up onboarding by offering pre-filled country templates (e.g. "Nigeria PAYE
-defaults"), that can be added as optional starting data for the same form
-without changing this calculation engine.
+The calculation engine applies effective-dated regional rules when verified
+data is available, and supports company-configured payroll rules. Payroll
+configuration snapshots preserve the rules used for a run, and preview lets
+operators review calculations before processing. This shared architecture
+supports multiple markets, but it does not assert that statutory rates have
+been verified for every country. Missing or unverified rules must be resolved
+before payroll can be approved.
 
 ## Current product positioning
 
-HRCloudPay is now presented as a unified People + Payroll + AI + Knowledge + Compliance workspace. The public marketing homepage highlights payroll, Employee 360°, HRCloud AI, document intelligence, compliance/audit, and connected operations. See `MILESTONE_48_MARKETING_FRONT_PAGE.md` for the marketing architecture and messaging.
+HRCloudPay brings together People + Payroll + AI + Knowledge + Compliance and
+connected operations. The public homepage highlights payroll, Employee 360°,
+HRCloud AI, document intelligence, compliance/audit, and connected operations.
+See `MILESTONE_48_MARKETING_FRONT_PAGE.md` for the marketing architecture and
+messaging.
 
 ## Deploying
 
-This MVP uses SQLite and Django's console email backend for easy local setup.
+For local development, the defaults use SQLite and the console email backend.
+Production deployments should use managed PostgreSQL, durable shared cache,
+private object storage, and configured SMTP as described below.
 Before going live:
 - Set `DATABASE_URL` to a Postgres URL with `sslmode=require` — `settings.py` reads
   it and falls back to SQLite when it is absent, so nothing in the source needs
