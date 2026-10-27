@@ -2,7 +2,7 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
-from .models import Company, User, PLAN_CHOICES
+from .models import Company, User, PLAN_CHOICES, ROLE_CHOICES
 from regional.countries.registry import COUNTRY_PACKS
 from regional.models import CompanyCountryProfile
 
@@ -270,4 +270,62 @@ class PlatformUserSerializer(serializers.ModelSerializer):
     company_name = serializers.CharField(source='company.name', read_only=True, default=None)
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'role', 'is_active', 'is_staff', 'is_superuser', 'company', 'company_name', 'date_joined']
+        fields = [
+            'id', 'username', 'email', 'first_name', 'last_name', 'role',
+            'managed_department', 'is_active', 'is_staff', 'is_superuser',
+            'company', 'company_name', 'date_joined',
+        ]
+
+
+class PlatformUserUpdateSerializer(serializers.ModelSerializer):
+    """Allowlisted tenant-account profile fields for platform administrators.
+
+    Platform access flags, tenant assignment and credentials deliberately are
+    not writable here. Password changes use the emailed reset-link flow.
+    """
+    role = serializers.ChoiceField(choices=ROLE_CHOICES, required=False)
+    is_active = serializers.BooleanField(required=False)
+
+    class Meta:
+        model = User
+        fields = [
+            'username', 'email', 'first_name', 'last_name', 'role',
+            'managed_department', 'is_active',
+        ]
+        extra_kwargs = {
+            'username': {'required': False},
+            'email': {'required': False},
+            'first_name': {'required': False},
+            'last_name': {'required': False},
+            'managed_department': {'required': False},
+        }
+
+    def validate_username(self, value):
+        current = self.instance
+        if current and value.casefold() == current.username.casefold():
+            return value
+        if User.objects.filter(username__iexact=value).exclude(pk=current.pk if current else None).exists():
+            raise serializers.ValidationError('This username is already taken.')
+        return value
+
+    def validate_email(self, value):
+        current = self.instance
+        if current and value.casefold() == current.email.casefold():
+            return value
+        if User.objects.filter(email__iexact=value).exclude(pk=current.pk if current else None).exists():
+            raise serializers.ValidationError('This email address is already assigned to another user.')
+        return value
+
+    def validate_role(self, value):
+        if self.instance and self.instance.role == 'owner' and value != 'owner':
+            raise serializers.ValidationError('A tenant owner role cannot be changed from the platform user editor.')
+        return value
+
+    def validate(self, attrs):
+        role = attrs.get('role', getattr(self.instance, 'role', None))
+        department = attrs.get('managed_department', getattr(self.instance, 'managed_department', ''))
+        if role == 'department_manager' and ('role' in attrs or 'managed_department' in attrs) and not department.strip():
+            raise serializers.ValidationError({
+                'managed_department': 'Required when role is department_manager.'
+            })
+        return attrs

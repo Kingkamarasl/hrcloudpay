@@ -2,6 +2,7 @@ from django.urls import path
 
 from .seo_views import PlatformSeoDetailView, PlatformSeoView
 from .platform import (PlatformDashboardView, PlatformCompaniesView, PlatformCompanyDetailView, PlatformCompanyActivationView, PlatformCompanySuspensionView, PlatformCompanyResendActivationView, PlatformUsersView, PlatformUserDetailView, PlatformUsageView, PlatformSubscriptionsView, PlatformOnboardingView, PlatformAuditLogsView, PlatformNotificationsView, PlatformSupportView, PlatformAnalyticsView, PlatformBillingPlansView, PlatformPaymentProvidersView, PlatformPaymentProviderToggleView, PlatformSubscriptionStatusView, PlatformCompany360View, PlatformPaymentTransactionsView, PlatformSystemHealthView, PlatformSecurityCenterView, PlatformFeatureFlagsView, PlatformFeatureFlagDetailView, PlatformSupportDetailView, PlatformGlobalSearchView, PaymentWebhookView, BillingPlansView, CompanyBillingView, CompanyBillingCheckoutView, CompanyBillingVerifyView, PublicMarketingPageView, PlatformMarketingPagesView, PlatformMarketingPageDetailView, PlatformAIConfigView, PlatformAITestView, PlatformEmailConfigView, PlatformEmailTestView, PlatformSiteBrandingView, CompanyBillingCancelView, CompanyBillingReactivateView, CompanyBillingInvoicesView)
+from .platform import PlatformUserPasswordResetView
 from .views import (
     PublicFeaturesView, ActivateView, CompanyAuditLogsView, CompanyUserDetailView,
     CompanyUsersView, CompanySettingsView, CompanyLogoView, LoginView, LogoutView, MeView, RegisterView,
@@ -34,6 +35,7 @@ urlpatterns = [
     path('platform/companies/<int:company_id>/resend-activation/', PlatformCompanyResendActivationView.as_view(), name='platform-company-resend-activation'),
     path('platform/users/', PlatformUsersView.as_view(), name='platform-users'),
     path('platform/users/<int:user_id>/', PlatformUserDetailView.as_view(), name='platform-user-detail'),
+    path('platform/users/<int:user_id>/password-reset/', PlatformUserPasswordResetView.as_view(), name='platform-user-password-reset'),
     path('platform/usage/', PlatformUsageView.as_view(), name='platform-usage'),
     path('platform/subscriptions/', PlatformSubscriptionsView.as_view(), name='platform-subscriptions'),
     path('platform/billing-plans/', PlatformBillingPlansView.as_view(), name='platform-billing-plans'),

@@ -208,19 +208,39 @@ class PasswordResetConfirmTests(ThrottleClearingMixin, TestCase):
     def test_a_reset_ends_every_existing_session(self):
         """Otherwise the reset is decorative: the session a compromised password
         opened keeps working after the owner changes it."""
+        import hashlib
+        from datetime import timedelta
+
         from django.contrib.sessions.backends.db import SessionStore
         from django.contrib.sessions.models import Session
         from django.contrib.auth import SESSION_KEY
         from django.utils import timezone
+        from rest_framework.authtoken.models import Token
+        from security.models import PAMSession, SecuritySession
 
         store = SessionStore()
         store[SESSION_KEY] = str(self.user.pk)
         store.create()
+        cookie_session = SecuritySession.objects.create(
+            user=self.user, company=self.user.company,
+            secret_hash=hashlib.sha256(b'old-cookie-secret').hexdigest(),
+            expires_at=timezone.now() + timedelta(hours=4),
+        )
+        pam_session = PAMSession.objects.create(
+            user=self.user, company=self.user.company, permissions=['payroll.approve'],
+            expires_at=timezone.now() + timedelta(hours=1),
+        )
+        token = Token.objects.create(user=self.user)
         self.assertTrue(Session.objects.exists())
 
         self.confirm()
 
         self.assertFalse(Session.objects.exists())
+        cookie_session.refresh_from_db()
+        pam_session.refresh_from_db()
+        self.assertIsNotNone(cookie_session.revoked_at)
+        self.assertIsNotNone(pam_session.revoked_at)
+        self.assertFalse(Token.objects.filter(pk=token.pk).exists())
         self.user.refresh_from_db()
         self.assertTrue(self.user.check_password('An0ther-Str0ng-Pass'))
 

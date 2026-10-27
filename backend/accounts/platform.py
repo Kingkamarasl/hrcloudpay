@@ -24,7 +24,7 @@ from hrcloudpay.site_icons import (
 )
 from .platform_models import AuditLog, PlatformNotification, Subscription, SuspensionEvent, SupportTicket, PaymentProviderConfig, PaymentEvent, PaymentTransaction, BillingInvoice, FeatureFlag, MarketingPage, BillingPlan
 from .audit_chain import verify_chain
-from .audit import audit
+from .audit import audit, changed_fields, snapshot_fields
 from .marketing_schema import (
     MAX_REPEATED,
     MAX_SECTIONS,
@@ -33,7 +33,10 @@ from .marketing_schema import (
     is_valid_slug,
     validate_content,
 )
-from .serializers import PlatformCompanyCreateSerializer, PlatformCompanySerializer, PlatformUserSerializer
+from .serializers import (
+    PlatformCompanyCreateSerializer, PlatformCompanySerializer,
+    PlatformUserSerializer, PlatformUserUpdateSerializer,
+)
 from .billing import PLAN_LABELS, PLAN_PRICES, PLAN_USER_LIMITS, subscription_state, start_trial
 from .permissions import IsOwnerOrAdminOnly
 from .secrets import encrypt_secret, decrypt_secret, clean_secret
@@ -311,15 +314,85 @@ class PlatformUserDetailView(APIView):
             'deleted_user_id': target_id,
         })
 
-    def patch(self,request,user_id):
-        user=get_object_or_404(User,id=user_id)
-        if user.id==request.user.id and request.data.get('is_active') is False: return Response({'detail':'You cannot deactivate your own platform admin account.'},status=400)
-        if 'is_active' in request.data: user.is_active=bool(request.data['is_active'])
-        if 'role' in request.data and user.role!='owner':
-            if request.data['role'] not in ('admin','hr','finance','department_manager','employee','owner'): return Response({'detail':'Invalid role.'},status=400)
-            user.role=request.data['role']
-        user.save(update_fields=['is_active','role']); audit(request.user,'update',f"Updated user {user.username}",user.company,'user',user.id)
+    def patch(self, request, user_id):
+        user = get_object_or_404(User, id=user_id)
+        allowed = set(PlatformUserUpdateSerializer.Meta.fields)
+        unsupported = sorted(set(request.data.keys()) - allowed)
+        if unsupported:
+            if 'password' in unsupported:
+                detail = 'Passwords cannot be set directly. Use the password-reset email action.'
+            else:
+                detail = f'Unsupported user fields: {", ".join(unsupported)}.'
+            return Response({'detail': detail, 'fields': unsupported}, status=400)
+
+        serializer = PlatformUserUpdateSerializer(user, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        updates = serializer.validated_data
+        if updates.get('is_active') is False and user.id == request.user.id:
+            return Response({
+                'detail': 'You cannot deactivate your own platform admin account.'
+            }, status=400)
+        if (updates.get('is_active') is False and user.is_active and user.is_superuser
+                and User.objects.filter(is_superuser=True, is_active=True).count() <= 1):
+            return Response({
+                'detail': 'This is the last active superuser. Promote another superuser before deactivating this account.'
+            }, status=400)
+
+        fields = tuple(PlatformUserUpdateSerializer.Meta.fields)
+        before = snapshot_fields(user, fields)
+        with transaction.atomic():
+            user = serializer.save()
+            changes = changed_fields(user, fields, before)
+            if updates.get('is_active') is False:
+                from .password_reset import _drop_sessions
+                _drop_sessions(user)
+            if changes:
+                action = (
+                    'permission_change' if 'role' in changes else
+                    'account_status' if 'is_active' in changes else 'update'
+                )
+                audit(
+                    request.user, action, f'Updated user {user.username}',
+                    user.company, 'user', user.id, {'changes': changes},
+                    request=request,
+                )
         return Response(PlatformUserSerializer(user).data)
+
+
+class PlatformUserPasswordResetView(APIView):
+    """Email a standard, time-limited reset link without exposing credentials."""
+    permission_classes = [IsAdminUser]
+    throttle_scope = 'password_reset'
+
+    def post(self, request, user_id):
+        user = get_object_or_404(User, id=user_id)
+        if not user.is_active:
+            return Response({
+                'detail': 'Activate this account before sending a password reset link.'
+            }, status=400)
+        if not user.email:
+            return Response({
+                'detail': 'This account has no email address. Add one before sending a reset link.'
+            }, status=400)
+
+        from django.contrib.auth.tokens import default_token_generator
+        from .password_reset import PasswordResetRequestView
+
+        audit(
+            request.user, 'security',
+            f'Platform admin requested a password reset for {user.username}',
+            user.company, 'user', user.id,
+            {'method': 'emailed_reset_link'}, request=request,
+        )
+        token = default_token_generator.make_token(user)
+        delivered = PasswordResetRequestView._deliver(user, token)
+        if not delivered:
+            return Response({
+                'detail': 'The reset email could not be delivered. Check the platform email configuration and logs.'
+            }, status=503)
+        return Response({
+            'detail': f'Password reset link accepted for delivery to {user.email}.'
+        })
 
 
 class PlatformUsageView(APIView):

@@ -28,14 +28,17 @@ from django.conf import settings
 from django.contrib.auth import password_validation
 from django.contrib.auth.tokens import default_token_generator
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
+from django.utils import timezone
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.models import User
 from hrcloudpay.email_backend import send_mail_logging_failure
+from .audit import audit
 
 # One answer for every outcome. Not an oversight - see the module docstring.
 GENERIC_RESPONSE = {
@@ -168,13 +171,18 @@ class PasswordResetConfirmView(APIView):
                 status=400,
             )
 
-        user.set_password(password)
-        user.save(update_fields=['password'])
+        with transaction.atomic():
+            user.set_password(password)
+            user.save(update_fields=['password'])
 
-        # A password change must invalidate outstanding sessions: that is the
-        # point of changing it after a suspected compromise, and leaving old
-        # sessions working would make the reset decorative.
-        _drop_sessions(user)
+            # A password change must invalidate every authentication mechanism;
+            # otherwise an old cookie or API token could outlive the reset.
+            _drop_sessions(user)
+            audit(
+                user, 'security', f'Password reset completed for user {user.username}',
+                user.company, 'user', user.id,
+                {'event': 'password_reset_completed'}, request=request,
+            )
 
         return Response({'detail': 'Your password has been changed. You can sign in now.'})
 
@@ -196,7 +204,20 @@ def _drop_sessions(user):
     from django.contrib.auth import SESSION_KEY
     from django.contrib.sessions.backends.db import SessionStore
     from django.contrib.sessions.models import Session
-    from django.utils import timezone
+
+    # The SPA cookie, elevated PAM session and legacy API token are separate
+    # credentials from Django's database session. Revoke them as well, so a
+    # reset cannot leave a second authentication path alive.
+    from security.models import PAMSession, SecuritySession
+
+    now = timezone.now()
+    SecuritySession.objects.filter(user=user, revoked_at__isnull=True).update(
+        revoked_at=now)
+    PAMSession.objects.filter(user=user, revoked_at__isnull=True).update(
+        revoked_at=now)
+    token = getattr(user, 'auth_token', None)
+    if token is not None:
+        token.delete()
 
     live = Session.objects.filter(expire_date__gt=timezone.now()).only(
         'session_key', 'session_data')
