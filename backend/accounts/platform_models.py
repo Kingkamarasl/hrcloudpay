@@ -239,6 +239,26 @@ class PaymentEvent(models.Model):
         ordering = ['-received_at']
 
 
+class IdempotencyRecord(models.Model):
+    STATUS_CHOICES = [('processing', 'Processing'), ('completed', 'Completed')]
+    company = models.ForeignKey('Company', on_delete=models.CASCADE, related_name='idempotency_records')
+    actor = models.ForeignKey('User', null=True, blank=True, on_delete=models.SET_NULL, related_name='idempotency_records')
+    key = models.CharField(max_length=200)
+    operation = models.CharField(max_length=100)
+    request_hash = models.CharField(max_length=64)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='processing')
+    response_status = models.PositiveSmallIntegerField(null=True, blank=True)
+    response_body = models.JSONField(default=dict, blank=True)
+    resource_type = models.CharField(max_length=100, blank=True)
+    resource_id = models.CharField(max_length=100, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['company', 'key', 'operation'], name='unique_company_idempotency_operation')]
+        indexes = [models.Index(fields=['company', 'created_at'])]
+
+
 class PaymentTransaction(models.Model):
     STATUS = [('pending', 'Pending'), ('paid', 'Paid'), ('failed', 'Failed'), ('cancelled', 'Cancelled')]
     company = models.ForeignKey('Company', on_delete=models.CASCADE, related_name='payment_transactions')

@@ -15,6 +15,7 @@ from accounts.permissions import (
     CanManagePayroll, CanViewPayslips, IsCompanyActive, IsCompanyMember,
 )
 from accounts.audit import audit
+from accounts.idempotency import begin as begin_idempotency, complete as complete_idempotency
 from security.step_up import RequiresFreshMfa
 from employees.models import Employee
 
@@ -149,16 +150,19 @@ class ProcessPayrollRunView(APIView):
             payroll_run = get_object_or_404(
                 PayrollRun.objects.select_for_update(), id=run_id, company=company
             )
+            idem, replay = begin_idempotency(request, f'payroll.process:{run_id}', company)
+            if replay:
+                return replay
 
             config = PayrollConfig.objects.filter(company=company).first()
             if not config:
-                return Response(
+                return complete_idempotency(idem, Response(
                     {'detail': 'Complete payroll setup before running payroll.'},
                     status=status.HTTP_400_BAD_REQUEST,
-                )
+                ))
 
             if payroll_run.status != 'draft':
-                return Response({'detail': 'This payroll run has already been processed.'}, status=400)
+                return complete_idempotency(idem, Response({'detail': 'This payroll run has already been processed.'}, status=400))
 
             calculation_config, config_version = effective_config_for(config, payroll_run.period_end)
             if config_version is None:
@@ -201,7 +205,7 @@ class ProcessPayrollRunView(APIView):
             payroll_run.save(update_fields=['status', 'config_version', 'configuration_snapshot'])
 
         audit(request.user, 'payroll_process', f'Processed payroll {payroll_run.period_start} to {payroll_run.period_end}', company, 'payroll_run', payroll_run.id, {'employee_count': employees.count()}, request=request)
-        return Response(PayrollRunSerializer(payroll_run).data)
+        return complete_idempotency(idem, Response(PayrollRunSerializer(payroll_run).data), 'PayrollRun', payroll_run.id)
 
 
 class ApprovePayrollRunView(APIView):
@@ -212,8 +216,11 @@ class ApprovePayrollRunView(APIView):
     def post(self, request, run_id):
         with transaction.atomic():
             run = get_object_or_404(PayrollRun.objects.select_for_update(), id=run_id, company=request.user.company)
+            idem, replay = begin_idempotency(request, f'payroll.approve:{run_id}', request.user.company)
+            if replay:
+                return replay
             if run.status != 'processed':
-                return Response({'detail': 'Only processed payroll runs can be approved.'}, status=400)
+                return complete_idempotency(idem, Response({'detail': 'Only processed payroll runs can be approved.'}, status=400))
             # Approving is the point of no return, so it is where an unverified
             # country tax result has to stop. The run is still calculable - a
             # payroll that refuses to produce numbers helps nobody - but a
@@ -222,7 +229,7 @@ class ApprovePayrollRunView(APIView):
             gaps = collect_compliance_gaps(run)
             acknowledged = _acknowledges_gaps(request.data)
             if gaps and not acknowledged:
-                return Response({
+                return complete_idempotency(idem, Response({
                     'detail': (
                         'This payroll contains statutory compliance gaps that must be '
                         'acknowledged before approval. Resend with '
@@ -230,7 +237,7 @@ class ApprovePayrollRunView(APIView):
                     ),
                     'code': 'compliance_gaps_unacknowledged',
                     'compliance_gaps': gaps,
-                }, status=409)
+                }, status=409))
             run.status = 'approved'
             run.approved_at = timezone.now()
             run.approved_by = request.user
@@ -247,7 +254,7 @@ class ApprovePayrollRunView(APIView):
             {'compliance_gaps_acknowledged': gaps} if acknowledged else None,
             request=request,
         )
-        return Response(PayrollRunSerializer(run).data)
+        return complete_idempotency(idem, Response(PayrollRunSerializer(run).data), 'PayrollRun', run.id)
 
 
 class PayPayrollRunView(APIView):
@@ -257,12 +264,15 @@ class PayPayrollRunView(APIView):
     def post(self, request, run_id):
         with transaction.atomic():
             run = get_object_or_404(PayrollRun.objects.select_for_update(), id=run_id, company=request.user.company)
+            idem, replay = begin_idempotency(request, f'payroll.pay:{run_id}', request.user.company)
+            if replay:
+                return replay
             if run.status != 'approved':
-                return Response({'detail': 'Approve the payroll run before recording payment.'}, status=400)
+                return complete_idempotency(idem, Response({'detail': 'Approve the payroll run before recording payment.'}, status=400))
             method = request.data.get('payment_method', '').strip()
             reference = request.data.get('payment_reference', '').strip()
             if not method or not reference:
-                return Response({'detail': 'Payment method and reference are required.'}, status=400)
+                return complete_idempotency(idem, Response({'detail': 'Payment method and reference are required.'}, status=400))
             run.status = 'paid'
             run.save(update_fields=['status'])
             run.payslips.update(payment_method=method, payment_reference=reference, paid_at=timezone.now())
@@ -271,7 +281,7 @@ class PayPayrollRunView(APIView):
             # failure rolls back the payment and payslip updates.
             create_compliance_pack(run, request.user)
         audit(request.user, 'payroll_payment', f'Recorded payment for payroll {run.period_start} to {run.period_end}', run.company, 'payroll_run', run.id, {'payment_method': method, 'payment_reference': reference}, request=request)
-        return Response(PayrollRunSerializer(run).data)
+        return complete_idempotency(idem, Response(PayrollRunSerializer(run).data), 'PayrollRun', run.id)
 
 
 class PayrollExportView(APIView):

@@ -133,4 +133,4 @@ class User(AbstractUser):
 
 # Platform control-center models live in a separate module to keep the tenant
 # models above stable and easy to read.
-from .platform_models import Subscription, AuditLog, SuspensionEvent, PlatformNotification, SupportTicket, PaymentProviderConfig, PaymentEvent, PaymentPlan, PaymentTransaction  # noqa: E402,F401
+from .platform_models import Subscription, AuditLog, SuspensionEvent, PlatformNotification, SupportTicket, PaymentProviderConfig, PaymentEvent, IdempotencyRecord, PaymentPlan, PaymentTransaction  # noqa: E402,F401
