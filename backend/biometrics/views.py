@@ -67,6 +67,7 @@ def _punch_response(punch, duplicate=False):
         'error': punch.error,
         'attendance_record': punch.attendance_record_id,
         'employee': punch.employee.full_name if punch.employee else None,
+        'matched_by': punch.matched_by,
         'duplicate': duplicate,
     }
 
@@ -86,7 +87,7 @@ def _record_punch(device, payload):
     itself is unreadable - the only kind that stores nothing at all, because it
     is a device bug rather than an attendance event.
     """
-    employee = match_employee(device, payload.get('employee'))
+    employee, matched_by = match_employee(device, payload.get('employee'))
 
     punch_time_raw = payload.get('punch_time')
     try:
@@ -124,7 +125,8 @@ def _record_punch(device, payload):
         return _punch_response(existing, duplicate=True), 'duplicate'
 
     punch = BiometricPunch.objects.create(
-        device=device, employee=employee, punch_time=punch_time,
+        device=device, employee=employee, matched_by=matched_by,
+        punch_time=punch_time,
         utc_offset_minutes=utc_offset_minutes, punch_type=punch_type,
         # Devices may send vendor-specific fields, including biometric
         # templates. Retain only the documented attendance fields so an
@@ -254,7 +256,8 @@ class BiometricPunchIngestView(APIView):
     Shape - one punch:
         {
           "device_id": "ZK-001",
-          "employee": "CA0042" or 17,      # active enrollment template ID, employee_code or PK
+          "employee": "CA0042" or 17,      # enrolment template ID, employee_code,
+                                         #  or HRCloudPay PK if the device opted in
           "punch_time": "2026-10-25T08:02:14+02:00",
           "punch_type": "in" | "out" | "unknown"
         }
@@ -417,10 +420,17 @@ class BiometricPunchReconcileView(APIView):
 
         # Reset to pending so processing re-runs from the same state a freshly
         # arrived punch would have, rather than reading the previous verdict.
+        # A person attaching the employee is itself a matching decision, so it
+        # is recorded as such - and only then: a clock-out being reprocessed for
+        # the employee it already matched keeps the rule that matched it.
+        fields = ['employee', 'status', 'error']
+        if employee_id not in (None, ''):
+            punch.matched_by = 'manual'
+            fields.append('matched_by')
         punch.employee = employee
         punch.status = 'pending'
         punch.error = ''
-        punch.save(update_fields=['employee', 'status', 'error'])
+        punch.save(update_fields=fields)
         process_punch(punch)
         punch.refresh_from_db()
 

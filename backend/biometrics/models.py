@@ -72,6 +72,34 @@ ENROLLMENT_STATUSES = [
     ('revoked', 'Revoked'),
 ]
 
+# Which identifiers a terminal is allowed to identify someone by. Every policy
+# starts with the enrolment that ties a person to that terminal - it is the only
+# identifier the device cannot lie about. What follows is the operator's choice,
+# made per device because the same fleet can mix both kinds of terminal.
+#
+# 'pk' is the dangerous one and is never the default: a terminal whose local
+# user IDs are small integers (1..50 is the norm) would be read as HRCloudPay's
+# primary keys, which are assigned in creation order, so employee 7 on the
+# terminal becomes the seventh employee HRCloudPay happens to know - a
+# confidently wrong match on every punch of every shift. It exists because some
+# terminals really are fed our IDs, and it must be asked for.
+MATCH_POLICIES = [
+    ('enrolment', 'Enrolment template ID only'),
+    ('code', 'Enrolment template ID, then employee code'),
+    ('pk', 'Enrolment template ID, then employee code, then HRCloudPay ID'),
+]
+
+# The rule that actually decided who a punch belongs to, recorded on the punch
+# itself. Without it there is no way to answer "why did the system think this
+# was Ada?" later - and that question is only ever asked after something has
+# already gone wrong at payroll.
+MATCHED_BY_CHOICES = [
+    ('enrolment', 'Enrolment template ID'),
+    ('employee_code', 'Employee code'),
+    ('pk', 'HRCloudPay employee ID'),
+    ('manual', 'Chosen by a person'),
+]
+
 
 class BiometricDevice(models.Model):
     company = models.ForeignKey(
@@ -86,6 +114,13 @@ class BiometricDevice(models.Model):
     location = models.CharField(max_length=160, blank=True)
     status = models.CharField(
         max_length=20, choices=DEVICE_STATUSES, default='active')
+    # Which identifiers this terminal is allowed to identify someone by.
+    # Read at ingest time; see MATCH_POLICIES for why the dangerous option is
+    # per-device and opt-in rather than a global setting.
+    match_policy = models.CharField(
+        max_length=20, choices=MATCH_POLICIES, default='code',
+        help_text='Which identifiers this terminal may match punches by.',
+    )
     # Hashed API key used to authenticate punches from this device.
     api_key_hash = models.CharField(max_length=64, blank=True)
     last_seen_at = models.DateTimeField(null=True, blank=True)
@@ -184,6 +219,12 @@ class BiometricPunch(models.Model):
     employee = models.ForeignKey(
         Employee, on_delete=models.SET_NULL, null=True, blank=True,
         related_name='biometric_punches')
+    # The rule that decided the employee above (see MATCHED_BY_CHOICES), or
+    # blank when nothing matched. Written once at ingest and again when a person
+    # reconciles the punch by hand, because "who decided this was Ada" is a
+    # question asked only after something has already gone wrong.
+    matched_by = models.CharField(
+        max_length=20, choices=MATCHED_BY_CHOICES, blank=True, default='')
     punch_time = models.DateTimeField()
     # Minutes east of UTC that the reporting device's clock was set to. The
     # database stores punch_time as an instant and drops the offset, so without

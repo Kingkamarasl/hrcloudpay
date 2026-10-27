@@ -15,6 +15,11 @@ const TABS=[['devices','Devices'],['enrollments','Enrollments'],['punches','Punc
 const HEALTH_LABELS={ok:'Reporting',silent:'Silent',never_seen:'Never reported',not_monitored:'Not monitored'};
 const HEALTH_BADGES={ok:'paid',silent:'rejected',never_seen:'pending',not_monitored:'pending'};
 const NEEDS_ATTENTION=['silent','never_seen'];
+// Which rule the server used to decide a punch belongs to that person, and how
+// each terminal's matching policy reads. Both are shown because the two answer
+// the same question at different times: "why is this hours on Ada's record?"
+const MATCHED_BY_LABELS={enrolment:'enrolment template',employee_code:'employee code',pk:'HRCloudPay ID',manual:'set by a person'};
+const POLICY_LABELS={enrolment:'Enrolment only',code:'Enrolment + code',pk:'+ HRCloudPay ID'};
 function healthOf(d){return (d.health&&d.health.status)||'ok'}
 function sinceLabel(iso){
  const minutes=Math.floor((Date.now()-new Date(iso).getTime())/60000);
@@ -29,7 +34,7 @@ export default function Biometrics(){
  const [devices,setDevices]=useState([]),[enrollments,setEnrollments]=useState([]),[punches,setPunches]=useState([]);
  const [employees,setEmployees]=useState([]);
  const [loading,setLoading]=useState(true),[error,setError]=useState('');
- const [newKey,setNewKey]=useState(null),[form,setForm]=useState({name:'',device_id:'',device_type:'fingerprint',location:''});
+ const [newKey,setNewKey]=useState(null),[form,setForm]=useState({name:'',device_id:'',device_type:'fingerprint',location:'',match_policy:'code'});
  const [enrollForm,setEnrollForm]=useState({employee:'',device:'',method:'fingerprint',template_id:''});
  const [punchStatus,setPunchStatus]=useState('');
  const [reconcile,setReconcile]=useState(null),[reconcileError,setReconcileError]=useState('');
@@ -54,7 +59,7 @@ export default function Biometrics(){
   e.preventDefault();
   try{
    const created=await api.post('/biometrics/devices/',form);
-   setNewKey(created.api_key);setForm({name:'',device_id:'',device_type:'fingerprint',location:''});await load();
+   setNewKey(created.api_key);setForm({name:'',device_id:'',device_type:'fingerprint',location:'',match_policy:'code'});await load();
   }catch(e){setError(e.message||'Could not register device.')}
  }
  async function enroll(e){
@@ -96,11 +101,12 @@ export default function Biometrics(){
   <form className="form-grid" onSubmit={register} style={{padding:16}}>
    <div className="form-row"><div><label>Name</label><input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} required/></div><div><label>Device ID</label><input value={form.device_id} onChange={e=>setForm({...form,device_id:e.target.value})} required placeholder="Serial number"/></div></div>
    <div className="form-row"><div><label>Type</label><select value={form.device_type} onChange={e=>setForm({...form,device_type:e.target.value})}><option value="fingerprint">Fingerprint</option><option value="face">Face recognition</option><option value="iris">Iris</option><option value="palm">Palm</option><option value="card">Card / RFID</option><option value="other">Other</option></select></div><div><label>Location</label><input value={form.location} onChange={e=>setForm({...form,location:e.target.value})} placeholder="Lobby, gate 2…"/></div></div>
+   <div className="form-row"><div><label>Match punches by</label><select value={form.match_policy} onChange={e=>setForm({...form,match_policy:e.target.value})}><option value="code">Enrolment template ID, then employee code</option><option value="enrolment">Enrolment template ID only</option><option value="pk">Enrolment template ID, then employee code, then HRCloudPay ID</option></select><p style={{color:'var(--text-muted)',fontSize:'.78rem',marginTop:6}}>The terminal's own enrolment template is always accepted, and employee codes are unique per company. Choose the last option only if this terminal is fed our employee IDs: otherwise its own local user IDs would be read as ours, and the wrong person's hours would be recorded without an error.</p></div><div></div></div>
    <div className="modal-actions"><button className="btn btn-primary" type="submit"><Icon name="plus" size={15}/>Register terminal</button></div>
   </form>
-  <div className="table-wrap"><table className="data-table"><thead><tr><th>Name</th><th>Device ID</th><th>Type</th><th>Location</th><th>Status</th><th>Reporting</th><th>Last seen</th><th></th></tr></thead><tbody>
-   {devices.map(d=><tr key={d.id}><td><strong>{d.name}</strong></td><td>{d.device_id}</td><td>{d.device_type}</td><td>{d.location||'—'}</td><td><span className={`badge badge-${d.status==='active'?'paid':d.status==='retired'?'rejected':'pending'}`}>{d.status}</span></td><td><span className={`badge badge-${HEALTH_BADGES[healthOf(d)]||'pending'}`} title={d.health?.detail||''}>{HEALTH_LABELS[healthOf(d)]||healthOf(d)}</span></td><td>{d.last_seen_at?`${sinceLabel(d.last_seen_at)} · ${new Date(d.last_seen_at).toLocaleString()}`:'Never'}</td><td>{d.status!=='retired'&&<button className="btn btn-secondary compact" onClick={()=>retire(d.id)}>Retire</button>}</td></tr>)}
-   {!devices.length&&<tr><td colSpan="8" className="empty-row">No terminals registered. Register one above and paste its API key into the device.</td></tr>}
+  <div className="table-wrap"><table className="data-table"><thead><tr><th>Name</th><th>Device ID</th><th>Type</th><th>Location</th><th>Status</th><th>Matches</th><th>Reporting</th><th>Last seen</th><th></th></tr></thead><tbody>
+   {devices.map(d=><tr key={d.id}><td><strong>{d.name}</strong></td><td>{d.device_id}</td><td>{d.device_type}</td><td>{d.location||'—'}</td><td><span className={`badge badge-${d.status==='active'?'paid':d.status==='retired'?'rejected':'pending'}`}>{d.status}</span></td><td title="Which identifiers this terminal may match punches by">{POLICY_LABELS[d.match_policy]||d.match_policy}</td><td><span className={`badge badge-${HEALTH_BADGES[healthOf(d)]||'pending'}`} title={d.health?.detail||''}>{HEALTH_LABELS[healthOf(d)]||healthOf(d)}</span></td><td>{d.last_seen_at?`${sinceLabel(d.last_seen_at)} · ${new Date(d.last_seen_at).toLocaleString()}`:'Never'}</td><td>{d.status!=='retired'&&<button className="btn btn-secondary compact" onClick={()=>retire(d.id)}>Retire</button>}</td></tr>)}
+   {!devices.length&&<tr><td colSpan="9" className="empty-row">No terminals registered. Register one above and paste its API key into the device.</td></tr>}
   </tbody></table></div>
  </>}
  {tab==='enrollments'&&<>
@@ -121,7 +127,7 @@ export default function Biometrics(){
    <span style={{color:'var(--text-muted)',fontSize:'.78rem'}}>Failed and ignored punches are the ones waiting for a person to reconcile.</span>
   </div>
   <div className="table-wrap"><table className="data-table"><thead><tr><th>Time</th><th>Employee</th><th>Terminal</th><th>Type</th><th>Status</th><th>Error</th><th></th></tr></thead><tbody>
-   {punches.map(p=><tr key={p.id}><td>{new Date(p.punch_time).toLocaleString()}</td><td>{p.employee_name||'Unmatched'}</td><td>{p.device_name}</td><td>{p.punch_type}</td><td><span className={`badge badge-${p.status==='processed'?'paid':p.status==='failed'?'rejected':'pending'}`}>{p.status}</span></td><td>{p.error||'—'}</td><td>{p.status!=='processed'&&<button className="btn btn-secondary compact" onClick={()=>openReconcile(p)}>Reconcile</button>}</td></tr>)}
+   {punches.map(p=><tr key={p.id}><td>{new Date(p.punch_time).toLocaleString()}</td><td>{p.employee_name||'Unmatched'}{p.matched_by&&<div style={{color:'var(--text-muted)',fontSize:'.72rem'}}>via {MATCHED_BY_LABELS[p.matched_by]||p.matched_by}</div>}</td><td>{p.device_name}</td><td>{p.punch_type}</td><td><span className={`badge badge-${p.status==='processed'?'paid':p.status==='failed'?'rejected':'pending'}`}>{p.status}</span></td><td>{p.error||'—'}</td><td>{p.status!=='processed'&&<button className="btn btn-secondary compact" onClick={()=>openReconcile(p)}>Reconcile</button>}</td></tr>)}
    {!punches.length&&<tr><td colSpan="7" className="empty-row">{punchStatus?'No punches with this status.':'No punches received yet. Point a terminal at POST /api/biometrics/punch/ with its API key.'}</td></tr>}
   </tbody></table></div>
   {reconcile&&<div className="modal-backdrop" role="dialog" aria-modal="true" onClick={()=>setReconcile(null)}><div className="modal-card" onClick={e=>e.stopPropagation()}>

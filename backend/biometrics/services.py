@@ -146,37 +146,66 @@ def _open_record(employee):
 
 
 def match_employee(device, identifier):
-    """Resolve a device-side identifier to an Employee at the device's company.
+    """Resolve a device-side identifier to (employee, matched_by).
 
-    Prefer the active enrollment's device-side template ID, then accept the
-    employee's PK or employee_code for devices that report HRCloudPay IDs. All
-    matches are scoped to the device's company; ambiguous template IDs are not
-    guessed.
+    Which identifiers a terminal may identify someone by is that terminal's own
+    choice - see BiometricDevice.match_policy - and the rule that decided is
+    returned beside the employee so the punch can record it. Within the
+    device's policy the rules run in a fixed order:
+
+      1. the enrolment tying this person to this terminal (always allowed - it
+         is the one identifier the device cannot lie about)
+      2. the employee's code (HR-assigned and unique per company, so an exact
+         match cannot be a different person)
+      3. the employee's primary key - only where the device opted in
+
+    Rule 3 used to be implicit and was tried *before* the employee code, which
+    is how a terminal sending its own local IDs (1..50 is the norm) resolved to
+    HRCloudPay's IDs in creation order: employee 7 on the terminal became the
+    seventh employee this database happens to know, with no error and no way to
+    tell afterwards. Ambiguous enrolment template IDs are still not guessed -
+    two people cannot both be that template - and every match stays scoped to
+    the device's company.
+
+    Returns (None, '') when nothing matched, including for an empty or absent
+    identifier.
     """
     if identifier is None or identifier == '':
-        return None
+        return None, ''
     from biometrics.models import BiometricEnrollment
 
+    identifier = str(identifier)
     template_matches = list(BiometricEnrollment.objects.filter(
         device=device,
         employee__company_id=device.company_id,
         status='active',
-        template_id=str(identifier),
+        template_id=identifier,
     ).select_related('employee')[:2])
     if len(template_matches) == 1:
-        return template_matches[0].employee
+        return template_matches[0].employee, 'enrolment'
     if len(template_matches) > 1:
-        return None
+        return None, ''
+
+    policy = device.match_policy
+    if policy not in ('code', 'pk'):
+        # 'enrolment': nothing but this terminal's own enrolment decides.
+        return None, ''
 
     qs = Employee.objects.filter(company=device.company)
+    emp = qs.filter(employee_code__iexact=identifier).first()
+    if emp is not None:
+        return emp, 'employee_code'
+
+    if policy != 'pk':
+        return None, ''
     try:
         pk = int(identifier)
-        emp = qs.filter(pk=pk).first()
-        if emp is not None:
-            return emp
     except (TypeError, ValueError):
-        pass
-    return qs.filter(employee_code__iexact=str(identifier)).first()
+        return None, ''
+    emp = qs.filter(pk=pk).first()
+    if emp is not None:
+        return emp, 'pk'
+    return None, ''
 
 
 # Saturday, Sunday - the same convention payroll's absence rules use, so a

@@ -1091,3 +1091,183 @@ class BatchIngestTests(TestCase):
 
         self.assertEqual(response.status_code, 400, response.data)
         self.assertEqual(BiometricPunch.objects.count(), 0)
+
+
+class MatchPolicyTests(TestCase):
+    """Which identifiers a terminal may name someone by, and the record of
+    which rule actually decided a punch.
+
+    These tests pin both halves of the fix for the failure mode that leaves no
+    error: a terminal sending its own local user IDs (1..50 is the norm) used to
+    be read as HRCloudPay primary keys, which are assigned in creation order, so
+    the wrong person's hours were written with no warning at all.
+    """
+
+    def setUp(self):
+        self.company = _company()
+        self.device, self.raw_key = _device(self.company)
+        self.employee = _employee(self.company)
+        self.client = APIClient()
+        self.api = APIClient()
+        self.api.force_authenticate(_user(self.company))
+
+    def _set_policy(self, policy):
+        self.device.match_policy = policy
+        self.device.save(update_fields=['match_policy'])
+
+    def _punch(self, employee_identifier,
+               punch_time='2026-10-25T08:00:00+02:00', punch_type='in'):
+        return self.client.post(INGEST, {
+            'device_id': self.device.device_id,
+            'employee': employee_identifier,
+            'punch_time': punch_time, 'punch_type': punch_type,
+        }, format='json', HTTP_X_BIOMETRIC_DEVICE_KEY=self.raw_key)
+
+    def _second_employee(self, code):
+        # _employee() would reuse the first employee's address, which the
+        # company-scoped unique email constraint refuses.
+        return Employee.objects.create(
+            company=self.company, first_name='Grace', last_name='Hopper',
+            email='grace@%s.example' % self.company.name.lower(),
+            employee_code=code, employment_status='active')
+
+    def test_the_default_policy_does_not_read_a_number_as_an_our_id(self):
+        """The trap: employee 7 on the terminal is not HRCloudPay's seventh
+        employee, and nothing about a wrong match looks wrong."""
+        response = self._punch(self.employee.id)
+
+        self.assertEqual(response.status_code, 202, response.data)
+        self.assertEqual(response.data['status'], 'ignored')
+        punch = BiometricPunch.objects.get()
+        self.assertIsNone(punch.employee)
+        self.assertEqual(punch.matched_by, '')
+        self.assertEqual(Attendance.objects.count(), 0)
+
+    def test_the_employee_code_still_matches_by_default(self):
+        """Codes are assigned by HR and unique per company, so they remain a
+        safe default - the policy narrows the dangerous rule, not this one."""
+        response = self._punch(self.employee.employee_code)
+
+        self.assertEqual(response.status_code, 201, response.data)
+        punch = BiometricPunch.objects.get()
+        self.assertEqual(punch.employee, self.employee)
+        self.assertEqual(punch.matched_by, 'employee_code')
+        self.assertEqual(response.data['matched_by'], 'employee_code')
+
+    def test_a_terminal_opted_in_to_our_ids_records_that_it_matched_by_pk(self):
+        self._set_policy('pk')
+
+        response = self._punch(self.employee.id)
+
+        self.assertEqual(response.status_code, 201, response.data)
+        punch = BiometricPunch.objects.get()
+        self.assertEqual(punch.employee, self.employee)
+        self.assertEqual(punch.matched_by, 'pk')
+
+    def test_the_employee_code_wins_over_the_primary_key_when_both_are_allowed(self):
+        """A device sending 7 means *its* user 7. Where that same number is our
+        employee code for someone else, the code is the business fact that was
+        actually transmitted and the primary key is only the guess - the old
+        code tried the primary key first and got this backwards."""
+        twin = self._second_employee(code=str(self.employee.id))
+        self._set_policy('pk')
+
+        response = self._punch(int(self.employee.id))
+
+        self.assertEqual(response.status_code, 201, response.data)
+        punch = BiometricPunch.objects.get()
+        self.assertEqual(punch.employee, twin)
+        self.assertEqual(punch.matched_by, 'employee_code')
+
+    def test_a_terminal_can_be_locked_to_its_own_enrolments(self):
+        self._set_policy('enrolment')
+
+        # The employee code, which the default policy would have accepted:
+        refused = self._punch(self.employee.employee_code)
+
+        self.assertEqual(refused.status_code, 202, refused.data)
+        self.assertIsNone(BiometricPunch.objects.get().employee)
+
+        BiometricEnrollment.objects.create(
+            employee=self.employee, device=self.device,
+            method='fingerprint', template_id='tmpl-42')
+        allowed = self._punch('tmpl-42',
+                              punch_time='2026-10-25T09:00:00+02:00')
+
+        self.assertEqual(allowed.status_code, 201, allowed.data)
+        punch = BiometricPunch.objects.get(matched_by='enrolment')
+        self.assertEqual(punch.employee, self.employee)
+
+    def test_an_ambiguous_enrolment_template_is_not_guessed(self):
+        twin = self._second_employee(code='CA002')
+        for employee in (self.employee, twin):
+            BiometricEnrollment.objects.create(
+                employee=employee, device=self.device,
+                method='fingerprint', template_id='tmpl-42')
+
+        response = self._punch('tmpl-42')
+
+        self.assertEqual(response.status_code, 202, response.data)
+        punch = BiometricPunch.objects.get()
+        self.assertIsNone(punch.employee)
+        self.assertEqual(punch.matched_by, '')
+
+    def test_a_registered_terminal_defaults_to_the_safe_policy(self):
+        response = self.api.post(DEVICES, {
+            'name': 'Gate 3', 'device_id': 'ZK-003', 'device_type': 'face',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['match_policy'], 'code')
+
+    def test_the_policy_can_be_set_at_registration_and_is_shown_afterwards(self):
+        response = self.api.post(DEVICES, {
+            'name': 'Gate 2', 'device_id': 'ZK-002',
+            'device_type': 'face', 'match_policy': 'pk',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(
+            BiometricDevice.objects.get(device_id='ZK-002').match_policy, 'pk')
+        listing = self.api.get(DEVICES)
+        registered = [row for row in listing.data
+                      if row['device_id'] == 'ZK-002']
+        self.assertEqual(registered[0]['match_policy'], 'pk')
+
+    def test_the_punch_log_shows_how_the_employee_was_decided(self):
+        self._punch(self.employee.employee_code)
+
+        response = self.api.get('/api/biometrics/punches/')
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data[0]['matched_by'], 'employee_code')
+
+    def test_reconciling_by_hand_records_that_a_person_chose(self):
+        self._punch('NO-SUCH-CODE')
+        punch = BiometricPunch.objects.get()
+        self.assertEqual(punch.matched_by, '')
+
+        response = self.api.post(
+            '/api/biometrics/punches/%d/reconcile/' % punch.id,
+            {'employee': self.employee.id}, format='json')
+
+        self.assertEqual(response.status_code, 200, response.data)
+        punch.refresh_from_db()
+        self.assertEqual(punch.matched_by, 'manual')
+
+    def test_reprocessing_without_changing_the_employee_keeps_the_rule_that_matched(self):
+        """A failed clock-out is reprocessed for the employee it already
+        matched. Nobody chose anything, so the provenance must not be rewritten
+        to say a person did."""
+        self._punch(self.employee.employee_code,
+                    punch_time='2026-10-25T17:00:00+02:00', punch_type='out')
+        punch = BiometricPunch.objects.get()
+        self.assertEqual(punch.matched_by, 'employee_code')
+
+        response = self.api.post(
+            '/api/biometrics/punches/%d/reconcile/' % punch.id,
+            {}, format='json')
+
+        self.assertEqual(response.status_code, 200, response.data)
+        punch.refresh_from_db()
+        self.assertEqual(punch.matched_by, 'employee_code')
