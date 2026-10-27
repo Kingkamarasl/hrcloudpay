@@ -446,6 +446,12 @@ else:
         }
     }
 
+# How long a terminal may go without reporting a punch before it counts as
+# silent. Weekends and the company's own public holidays do not count toward it,
+# so a site does not raise an alarm every Monday morning. See
+# biometrics.services.device_health.
+BIOMETRIC_SILENCE_HOURS = config('BIOMETRIC_SILENCE_HOURS', default=24, cast=int)
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'security.authentication.SecurityCookieAuthentication',
@@ -476,6 +482,15 @@ REST_FRAMEWORK = {
         'mfa': config('THROTTLE_MFA_RATE', default='8/minute'),
         'password_change': config('THROTTLE_PASSWORD_CHANGE_RATE', default='5/minute'),
         'password_reset': config('THROTTLE_PASSWORD_RESET_RATE', default='5/hour'),
+        # Punch ingestion is metered per device key rather than per IP (see
+        # biometrics/throttling.py), because a terminal shares its address with
+        # every browser in the building and its budget should not be spent on
+        # page views. The budget is deliberately generous: a terminal flushing a
+        # day of queued punches bursts, and this limit exists to bound a leaked
+        # key, not to meter a healthy site. Override with
+        # THROTTLE_BIOMETRIC_PUNCH_RATE.
+        'biometric_device': config('THROTTLE_BIOMETRIC_PUNCH_RATE',
+                                   default='6000/hour'),
     },
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }

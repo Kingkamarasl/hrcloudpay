@@ -3,6 +3,7 @@ from django.urls import include, path
 from .views import (
     BiometricDeviceViewSet, BiometricEnrollmentViewSet,
     BiometricPunchIngestView, BiometricPunchListView,
+    BiometricPunchReconcileView,
 )
 
 urlpatterns = [
@@ -16,5 +17,6 @@ urlpatterns = [
     path('enrollments/<int:pk>/', BiometricEnrollmentViewSet.as_view(
         {'get': 'retrieve', 'delete': 'destroy'})),
     path('punches/', BiometricPunchListView.as_view()),
+    path('punches/<int:pk>/reconcile/', BiometricPunchReconcileView.as_view()),
     path('punch/', BiometricPunchIngestView.as_view()),
 ]

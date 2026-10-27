@@ -185,6 +185,14 @@ class BiometricPunch(models.Model):
         Employee, on_delete=models.SET_NULL, null=True, blank=True,
         related_name='biometric_punches')
     punch_time = models.DateTimeField()
+    # Minutes east of UTC that the reporting device's clock was set to. The
+    # database stores punch_time as an instant and drops the offset, so without
+    # this a punch read back from the database (reconciliation reads punches
+    # back) would yield the server's wall clock instead of the device's.
+    # Nullable: punches received before this column existed have no offset left
+    # to recover, and a device that reported a naive timestamp used the server's
+    # own zone, which is recorded here as-is.
+    utc_offset_minutes = models.IntegerField(null=True, blank=True)
     punch_type = models.CharField(
         max_length=10, choices=PUNCH_TYPES, default='unknown')
     # Allowlisted attendance fields from the device payload, kept for

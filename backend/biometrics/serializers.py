@@ -2,14 +2,28 @@ from rest_framework import serializers
 
 from .models import (
     BiometricDevice, BiometricEnrollment, BiometricPunch)
+from .services import device_health
 
 
 class BiometricDeviceSerializer(serializers.ModelSerializer):
+    """Device rows carry whether they are still reporting.
+
+    See biometrics.services.device_health (§ why silence is a signal). It is
+    computed per row rather than stored, because 'silent' is a statement about
+    now: a stored flag would be wrong from the moment the next punch arrived.
+    """
+    health = serializers.SerializerMethodField()
+
     class Meta:
         model = BiometricDevice
         fields = ('id', 'name', 'device_id', 'device_type', 'location',
-                  'status', 'last_seen_at', 'last_sync_at', 'created_at')
-        read_only_fields = ('id', 'last_seen_at', 'last_sync_at', 'created_at')
+                  'status', 'last_seen_at', 'last_sync_at', 'health',
+                  'created_at')
+        read_only_fields = ('id', 'last_seen_at', 'last_sync_at', 'health',
+                            'created_at')
+
+    def get_health(self, obj):
+        return device_health(obj)
 
 
 class BiometricDeviceCreateSerializer(serializers.ModelSerializer):

@@ -21,20 +21,39 @@ cannot disagree about what a shift is:
 
 from datetime import datetime, timedelta
 
+from django.conf import settings
 from django.utils import timezone
 
 from attendance.models import Attendance
 from employees.models import Employee
 
 
-def _as_local(dt):
-    # A punch carries the wall-clock time at the device, in the device's own
-    # offset. Converting it to the server's time zone would silently rewrite
-    # "08:00 at the Accra terminal" into "06:00" on a UTC server, which is
-    # the wrong fact for an attendance record. Keep the device's wall clock.
+def _device_wall_clock(punch):
+    """The punch's wall-clock time on the device that reported it.
+
+    A punch carries the time at the device, in the device's own offset, and
+    that wall clock is the fact attendance is made of: converting it to the
+    server's time zone would silently rewrite "08:00 at the Accra terminal"
+    into "06:00" on a UTC server, and move the shift to the wrong day.
+
+    The database keeps the instant, so the offset is kept beside it (see
+    BiometricPunch.utc_offset_minutes) and the wall clock is reconstructed from
+    the two. Reading it off the instance alone only worked while that instance
+    was the one just created by this process: a punch loaded from the database
+    comes back as a UTC instant, so reprocessing a stored punch - which is what
+    reconciliation is - has to go through the recorded offset.
+    """
+    dt = punch.punch_time
+    if punch.utc_offset_minutes is None:
+        # No offset recorded: a punch written before the column existed, or by
+        # a data fix. Keep the value as given rather than inventing one.
+        if timezone.is_naive(dt):
+            return timezone.make_aware(dt)
+        return dt
+    zone = timezone.get_fixed_timezone(punch.utc_offset_minutes)
     if timezone.is_naive(dt):
-        return timezone.make_aware(dt)
-    return dt
+        return timezone.make_aware(dt, zone)
+    return dt.astimezone(zone)
 
 
 def process_punch(punch):
@@ -52,7 +71,7 @@ def process_punch(punch):
         punch.save(update_fields=['status', 'error'])
         return None
 
-    local = _as_local(punch.punch_time)
+    local = _device_wall_clock(punch)
     punch_date = local.date()
     punch_time = local.time().replace(tzinfo=None)
     ptype = punch.punch_type
@@ -158,3 +177,83 @@ def match_employee(device, identifier):
     except (TypeError, ValueError):
         pass
     return qs.filter(employee_code__iexact=str(identifier)).first()
+
+
+# Saturday, Sunday - the same convention payroll's absence rules use, so a
+# quiet weekend is not mistaken for a broken terminal.
+WEEKEND_DAYS = {5, 6}
+
+
+def _is_working_day(company, day):
+    """Whether anyone was expected to clock in on `day`.
+
+    Weekends are excluded by the convention the rest of the app uses, and the
+    company's own declared public holidays are excluded because those are the
+    days a site is closed and a silent terminal is correct behaviour.
+    """
+    if day.weekday() in WEEKEND_DAYS:
+        return False
+    from payroll.models import PublicHoliday
+
+    return not PublicHoliday.objects.filter(company=company, date=day).exists()
+
+
+def device_health(device, now=None):
+    """Whether a terminal is still reporting, and why not if it is not.
+
+    A terminal that stops reporting leaves no trace of its own: attendance for
+    everyone who clocks on it simply stops existing, which looks exactly like a
+    quiet day until someone runs payroll from memory. So silence is treated as a
+    signal, and the answer is one of:
+
+      ok             reporting within the window, or silence that needs no
+                     explanation (a weekend, a public holiday)
+      silent         nothing for longer than BIOMETRIC_SILENCE_HOURS, and at
+                     least one working day has passed since the last punch
+      never_seen     registered and active, but has never reported a punch -
+                     normally a terminal nobody has pointed at this server yet
+      not_monitored  inactive or retired, where silence is deliberate
+
+    This is a staleness window plus a working-day gate, not a schedule engine.
+    It deliberately knows nothing about a site's normal daily rhythm beyond
+    weekends and holidays: a terminal only used on Fridays reads as silent the
+    rest of the week. Callers therefore show the last-seen time beside the
+    status, so that judgement stays with a person instead of being hidden by the
+    rule.
+    """
+    now = now or timezone.now()
+    if device.status != 'active':
+        return {'status': 'not_monitored', 'silence_hours': None,
+                'detail': 'Device is %s.' % device.get_status_display()}
+    if device.last_seen_at is None:
+        return {'status': 'never_seen', 'silence_hours': None,
+                'detail': 'No punch has ever been received from this terminal.'}
+
+    hours = (now - device.last_seen_at).total_seconds() / 3600.0
+    window = getattr(settings, 'BIOMETRIC_SILENCE_HOURS', 24)
+    if hours <= window:
+        return {'status': 'ok', 'silence_hours': round(hours, 1), 'detail': ''}
+
+    # Past the window, the only question left is whether anything was expected.
+    # Nothing was over a weekend or a public holiday.
+    last_day = timezone.localdate(device.last_seen_at)
+    today = timezone.localdate(now)
+    if today == last_day:
+        # The silence is inside the last-seen day, so that day is the one an
+        # expectation would have come from.
+        candidates = [today]
+    else:
+        candidates = [last_day + timedelta(days=n)
+                      for n in range(1, (today - last_day).days + 1)]
+    if not any(_is_working_day(device.company, day) for day in candidates):
+        return {'status': 'ok', 'silence_hours': round(hours, 1),
+                'detail': 'Quiet since %s, but no working day has passed.'
+                          % last_day.isoformat()}
+
+    return {
+        'status': 'silent',
+        'silence_hours': round(hours, 1),
+        'detail': 'No punch for %.0f hours. Last seen %s.'
+                  % (hours, timezone.localtime(device.last_seen_at)
+                     .strftime('%Y-%m-%d %H:%M')),
+    }

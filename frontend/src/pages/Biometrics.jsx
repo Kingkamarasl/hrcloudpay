@@ -8,6 +8,22 @@ import Icon from '../components/Icon';
 // in this database or in any backup of it.
 const TABS=[['devices','Devices'],['enrollments','Enrollments'],['punches','Punch log']];
 
+// A terminal that stops reporting leaves no trace: attendance for everyone who
+// clocks on it just stops existing, which looks like a quiet day until payroll.
+// The API answers whether each device is still reporting (see
+// backend/biometrics/services.device_health) and this page leads with it.
+const HEALTH_LABELS={ok:'Reporting',silent:'Silent',never_seen:'Never reported',not_monitored:'Not monitored'};
+const HEALTH_BADGES={ok:'paid',silent:'rejected',never_seen:'pending',not_monitored:'pending'};
+const NEEDS_ATTENTION=['silent','never_seen'];
+function healthOf(d){return (d.health&&d.health.status)||'ok'}
+function sinceLabel(iso){
+ const minutes=Math.floor((Date.now()-new Date(iso).getTime())/60000);
+ if(minutes<1)return 'just now';
+ if(minutes<60)return `${minutes}m ago`;
+ const hours=Math.floor(minutes/60);
+ return hours<24?`${hours}h ago`:`${Math.floor(hours/24)}d ${hours%24}h ago`;
+}
+
 export default function Biometrics(){
  const [tab,setTab]=useState('devices');
  const [devices,setDevices]=useState([]),[enrollments,setEnrollments]=useState([]),[punches,setPunches]=useState([]);
@@ -15,13 +31,15 @@ export default function Biometrics(){
  const [loading,setLoading]=useState(true),[error,setError]=useState('');
  const [newKey,setNewKey]=useState(null),[form,setForm]=useState({name:'',device_id:'',device_type:'fingerprint',location:''});
  const [enrollForm,setEnrollForm]=useState({employee:'',device:'',method:'fingerprint',template_id:''});
- async function load(){
+ const [punchStatus,setPunchStatus]=useState('');
+ const [reconcile,setReconcile]=useState(null),[reconcileError,setReconcileError]=useState('');
+ async function load(status=punchStatus){
   setLoading(true);
   try{
    const [d,e,p,em]=await Promise.all([
      api.get('/biometrics/devices/'),
      api.get('/biometrics/enrollments/'),
-     api.get('/biometrics/punches/?limit=100'),
+     api.get(`/biometrics/punches/?limit=100${status?`&status=${status}`:''}`),
      api.get('/employees/employees/?limit=500'),
    ]);
    setDevices(d.results??d);setEnrollments(e.results??e);setPunches(p.results??p);
@@ -31,7 +49,7 @@ export default function Biometrics(){
   }catch(e){setError(e.message||'Could not load biometric data.')}
   finally{setLoading(false)}
  }
- useEffect(()=>{load()},[]);
+ useEffect(()=>{load(punchStatus)},[punchStatus]);
  async function register(e){
   e.preventDefault();
   try{
@@ -57,10 +75,21 @@ export default function Biometrics(){
   try{await api.patch(`/biometrics/devices/${id}/`,{status:'retired'});await load();}
   catch(e){setError(e.message||'Could not retire device.')}
  }
- if(loading)return <div className="page-loading">Loading biometric data…</div>;
+ // A punch the log kept instead of guessing at: attach it to the employee it
+ // belongs to and let the server process it again.
+ function openReconcile(p){setReconcileError('');setReconcile({punch:p,employee:p.employee?String(p.employee):''})}
+ async function submitReconcile(e){
+  e.preventDefault();
+  try{
+   await api.post(`/biometrics/punches/${reconcile.punch.id}/reconcile/`,reconcile.employee?{employee:Number(reconcile.employee)}:{});
+   setReconcile(null);setReconcileError('');await load();
+  }catch(err){setReconcileError(err.message||'Could not reconcile punch.')}
+ }  if(loading)return <div className="page-loading">Loading biometric data…</div>;
+  const notReporting=devices.filter(d=>NEEDS_ATTENTION.includes(healthOf(d)));
  return <div className="page-shell">
- <section className="page-header"><div><div className="eyebrow">ATTENDANCE</div><h1>Biometric terminals</h1><p>Register fingerprint, face, iris or card terminals, enrol employees on them, and review the punches they report. Templates stay on the device.</p></div><button className="btn btn-secondary" onClick={load}><Icon name="refresh" size={15}/>Refresh</button></section>
+ <section className="page-header"><div><div className="eyebrow">ATTENDANCE</div><h1>Biometric terminals</h1><p>Register fingerprint, face, iris or card terminals, enrol employees on them, and review the punches they report. Terminals POST to /api/biometrics/punch/, one punch or a queued batch at a time. Templates stay on the device.</p></div><button className="btn btn-secondary" onClick={()=>load()}><Icon name="refresh" size={15}/>Refresh</button></section>
  {error&&<div className="alert alert-error">{error}</div>}
+ {notReporting.length>0&&<div className="alert alert-warning"><strong>{notReporting.length===1?'1 terminal is not reporting.':`${notReporting.length} terminals are not reporting.`}</strong> {notReporting.map(d=>`${d.name}: ${d.health.detail}`).join(' ')} Nobody who clocks on a silent terminal is being recorded.</div>}
  {newKey&&<div className="alert alert-warning"><strong>Copy this key now.</strong> It is shown once and never stored in readable form. Paste it into the terminal's configuration and keep it safe: {newKey}<button className="btn btn-secondary compact" style={{marginLeft:12}} onClick={()=>setNewKey(null)}>I have saved it</button></div>}
  <div className="panel"><div className="tabs">{TABS.map(([k,l])=><button key={k} className={`tab ${tab===k?'active':''}`} onClick={()=>setTab(k)}>{l}</button>)}</div>
  {tab==='devices'&&<>
@@ -69,9 +98,9 @@ export default function Biometrics(){
    <div className="form-row"><div><label>Type</label><select value={form.device_type} onChange={e=>setForm({...form,device_type:e.target.value})}><option value="fingerprint">Fingerprint</option><option value="face">Face recognition</option><option value="iris">Iris</option><option value="palm">Palm</option><option value="card">Card / RFID</option><option value="other">Other</option></select></div><div><label>Location</label><input value={form.location} onChange={e=>setForm({...form,location:e.target.value})} placeholder="Lobby, gate 2…"/></div></div>
    <div className="modal-actions"><button className="btn btn-primary" type="submit"><Icon name="plus" size={15}/>Register terminal</button></div>
   </form>
-  <div className="table-wrap"><table className="data-table"><thead><tr><th>Name</th><th>Device ID</th><th>Type</th><th>Location</th><th>Status</th><th>Last seen</th><th></th></tr></thead><tbody>
-   {devices.map(d=><tr key={d.id}><td><strong>{d.name}</strong></td><td>{d.device_id}</td><td>{d.device_type}</td><td>{d.location||'—'}</td><td><span className={`badge badge-${d.status==='active'?'paid':d.status==='retired'?'rejected':'pending'}`}>{d.status}</span></td><td>{d.last_seen_at?new Date(d.last_seen_at).toLocaleString():'Never'}</td><td>{d.status!=='retired'&&<button className="btn btn-secondary compact" onClick={()=>retire(d.id)}>Retire</button>}</td></tr>)}
-   {!devices.length&&<tr><td colSpan="7" className="empty-row">No terminals registered. Register one above and paste its API key into the device.</td></tr>}
+  <div className="table-wrap"><table className="data-table"><thead><tr><th>Name</th><th>Device ID</th><th>Type</th><th>Location</th><th>Status</th><th>Reporting</th><th>Last seen</th><th></th></tr></thead><tbody>
+   {devices.map(d=><tr key={d.id}><td><strong>{d.name}</strong></td><td>{d.device_id}</td><td>{d.device_type}</td><td>{d.location||'—'}</td><td><span className={`badge badge-${d.status==='active'?'paid':d.status==='retired'?'rejected':'pending'}`}>{d.status}</span></td><td><span className={`badge badge-${HEALTH_BADGES[healthOf(d)]||'pending'}`} title={d.health?.detail||''}>{HEALTH_LABELS[healthOf(d)]||healthOf(d)}</span></td><td>{d.last_seen_at?`${sinceLabel(d.last_seen_at)} · ${new Date(d.last_seen_at).toLocaleString()}`:'Never'}</td><td>{d.status!=='retired'&&<button className="btn btn-secondary compact" onClick={()=>retire(d.id)}>Retire</button>}</td></tr>)}
+   {!devices.length&&<tr><td colSpan="8" className="empty-row">No terminals registered. Register one above and paste its API key into the device.</td></tr>}
   </tbody></table></div>
  </>}
  {tab==='enrollments'&&<>
@@ -86,10 +115,26 @@ export default function Biometrics(){
   </tbody></table></div>
  </>}
  {tab==='punches'&&<>
-  <div className="table-wrap"><table className="data-table"><thead><tr><th>Time</th><th>Employee</th><th>Terminal</th><th>Type</th><th>Status</th><th>Error</th></tr></thead><tbody>
-   {punches.map(p=><tr key={p.id}><td>{new Date(p.punch_time).toLocaleString()}</td><td>{p.employee_name||'Unmatched'}</td><td>{p.device_name}</td><td>{p.punch_type}</td><td><span className={`badge badge-${p.status==='processed'?'paid':p.status==='failed'?'rejected':'pending'}`}>{p.status}</span></td><td>{p.error||'—'}</td></tr>)}
-   {!punches.length&&<tr><td colSpan="6" className="empty-row">No punches received yet. Point a terminal at POST /api/biometrics/punch/ with its API key.</td></tr>}
+  <div style={{display:'flex',alignItems:'center',gap:10,padding:'14px 16px',flexWrap:'wrap'}}>
+   <label htmlFor="punch-status" style={{fontWeight:700,fontSize:'.85rem'}}>Status</label>
+   <select id="punch-status" className="inline-select" value={punchStatus} onChange={e=>setPunchStatus(e.target.value)}><option value="">All punches</option><option value="processed">Processed</option><option value="failed">Failed</option><option value="ignored">Ignored</option><option value="pending">Pending</option></select>
+   <span style={{color:'var(--text-muted)',fontSize:'.78rem'}}>Failed and ignored punches are the ones waiting for a person to reconcile.</span>
+  </div>
+  <div className="table-wrap"><table className="data-table"><thead><tr><th>Time</th><th>Employee</th><th>Terminal</th><th>Type</th><th>Status</th><th>Error</th><th></th></tr></thead><tbody>
+   {punches.map(p=><tr key={p.id}><td>{new Date(p.punch_time).toLocaleString()}</td><td>{p.employee_name||'Unmatched'}</td><td>{p.device_name}</td><td>{p.punch_type}</td><td><span className={`badge badge-${p.status==='processed'?'paid':p.status==='failed'?'rejected':'pending'}`}>{p.status}</span></td><td>{p.error||'—'}</td><td>{p.status!=='processed'&&<button className="btn btn-secondary compact" onClick={()=>openReconcile(p)}>Reconcile</button>}</td></tr>)}
+   {!punches.length&&<tr><td colSpan="7" className="empty-row">{punchStatus?'No punches with this status.':'No punches received yet. Point a terminal at POST /api/biometrics/punch/ with its API key.'}</td></tr>}
   </tbody></table></div>
+  {reconcile&&<div className="modal-backdrop" role="dialog" aria-modal="true" onClick={()=>setReconcile(null)}><div className="modal-card" onClick={e=>e.stopPropagation()}>
+   <div className="modal-head"><div><h2>Reconcile punch</h2><p>{new Date(reconcile.punch.punch_time).toLocaleString()} · {reconcile.punch.device_name} · {reconcile.punch.punch_type}</p></div><button type="button" className="icon-btn" aria-label="Close" onClick={()=>setReconcile(null)}>×</button></div>
+   {reconcile.punch.error&&<div className="alert alert-warning">{reconcile.punch.error}</div>}
+   {reconcileError&&<div className="alert alert-error">{reconcileError}</div>}
+   <form onSubmit={submitReconcile}>
+    <label htmlFor="reconcile-employee">Employee</label>
+    <select id="reconcile-employee" value={reconcile.employee} onChange={e=>setReconcile({...reconcile,employee:e.target.value})} required><option value="">Select employee…</option>{employees.map(e=><option key={e.id} value={e.id}>{e.full_name} ({e.employee_code})</option>)}</select>
+    <p className="modal-note">The punch is processed again for this employee. Nothing is invented for it: if the punch still cannot make a shift, it stays in the log.</p>
+    <div className="modal-actions"><button type="button" className="btn btn-secondary" onClick={()=>setReconcile(null)}>Cancel</button><button className="btn btn-primary" type="submit">Reconcile punch</button></div>
+   </form>
+  </div></div>}
  </>}
  </div></div>
 }
