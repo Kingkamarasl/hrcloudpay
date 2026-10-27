@@ -1,6 +1,13 @@
 from rest_framework import serializers
 
-from .models import HRNotification, WorkflowTask, WorkflowRule
+from .models import HRNotification, NotificationPreference, WorkflowTask, WorkflowRule
+
+
+class NotificationPreferenceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NotificationPreference
+        fields = ['email_enabled', 'leave_events', 'payroll_events', 'hr_events', 'updated_at']
+        read_only_fields = ['updated_at']
 
 
 class NotificationSerializer(serializers.ModelSerializer):

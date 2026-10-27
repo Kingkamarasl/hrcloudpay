@@ -4,9 +4,62 @@ from django.utils import timezone
 from accounts.audit import audit
 from accounts.models import User, Company
 from employees.models import Employee, Contract, RequiredDocumentRule
-from .models import HRNotification, WorkflowTask, WorkflowRule
+from .models import HRNotification, NotificationDelivery, WorkflowTask, WorkflowRule
 
 HR_ROLES=('owner','admin','hr')
+
+
+def _email_allowed(user, notification_type):
+    preference = getattr(user, 'notification_preferences', None)
+    if not preference or not preference.email_enabled:
+        return False
+    if notification_type == 'leave':
+        return preference.leave_events
+    if notification_type == 'payroll':
+        return preference.payroll_events
+    return preference.hr_events
+
+
+def enqueue_email(notification):
+    recipient = notification.recipient
+    if not recipient.email or not _email_allowed(recipient, notification.notification_type):
+        return None
+    delivery, _ = NotificationDelivery.objects.get_or_create(
+        notification=notification, recipient=recipient,
+        defaults={
+            'email': recipient.email,
+            'subject': notification.title,
+            'body': f"{notification.message}\n\nOpen HRCloudPay: {notification.action_url or '/'}",
+        },
+    )
+    return delivery
+
+
+def process_notification_outbox(limit=100):
+    """Deliver pending email notifications with bounded exponential retry."""
+    from django.conf import settings
+    from django.core.mail import EmailMessage
+    now = timezone.now()
+    deliveries = list(NotificationDelivery.objects.select_related('notification').filter(status__in=('pending', 'failed'), next_attempt_at__lte=now, attempts__lt=5).order_by('created_at')[:limit])
+    counts = {'sent': 0, 'failed': 0}
+    for delivery in deliveries:
+        delivery.status = 'processing'
+        delivery.attempts += 1
+        delivery.save(update_fields=['status', 'attempts', 'updated_at'])
+        try:
+            EmailMessage(subject=delivery.subject, body=delivery.body, from_email=settings.DEFAULT_FROM_EMAIL, to=[delivery.email]).send(fail_silently=False)
+            delivery.status = 'sent'
+            delivery.sent_at = timezone.now()
+            delivery.last_error = ''
+            delivery.save(update_fields=['status', 'sent_at', 'last_error', 'updated_at'])
+            counts['sent'] += 1
+        except Exception as exc:
+            delivery.status = 'failed'
+            delivery.last_error = str(exc)[:2000]
+            delivery.next_attempt_at = timezone.now() + timedelta(minutes=min(60, 2 ** delivery.attempts))
+            delivery.save(update_fields=['status', 'last_error', 'next_attempt_at', 'updated_at'])
+            counts['failed'] += 1
+    return counts
 
 def hr_recipients(company):
     return list(User.objects.filter(company=company,is_active=True,role__in=HR_ROLES))
@@ -25,6 +78,7 @@ def notify(company,title,message,notification_type='system',level='info',employe
                 was_created = True
             if was_created:
                 created.append(obj)
+                enqueue_email(obj)
         except IntegrityError:
             pass
     return created

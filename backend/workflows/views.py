@@ -4,13 +4,29 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import MethodNotAllowed
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from accounts.audit import audit
 from accounts.permissions import IsCompanyActive, IsCompanyMember, CanManageHR
 
-from .models import HRNotification, WorkflowTask, WorkflowRule
-from .serializers import NotificationSerializer, TaskSerializer, RuleSerializer
+from .models import HRNotification, NotificationPreference, WorkflowTask, WorkflowRule
+from .serializers import NotificationSerializer, NotificationPreferenceSerializer, TaskSerializer, RuleSerializer
 from .services import run_due_automations
+
+
+class NotificationPreferenceView(APIView):
+    permission_classes = [IsAuthenticated, IsCompanyMember, IsCompanyActive]
+
+    def get(self, request):
+        preference, _ = NotificationPreference.objects.get_or_create(user=request.user)
+        return Response(NotificationPreferenceSerializer(preference).data)
+
+    def put(self, request):
+        preference, _ = NotificationPreference.objects.get_or_create(user=request.user)
+        serializer = NotificationPreferenceSerializer(preference, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
 
 
 class Base(viewsets.ModelViewSet):

@@ -77,6 +77,7 @@ log "loop starting (tick ${INTERVAL}s)"
 # Ordered cheapest-first so a slow database is still serving the cheap checks
 # while it is degraded, rather than the whole batch failing on the first call.
 run_every run_due_integrations      3600
+run_every process_notification_outbox 300
 run_every run_hr_automations        86400
 run_every accrue_leave              86400
 run_every check_document_expiry     86400

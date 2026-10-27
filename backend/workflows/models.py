@@ -3,6 +3,36 @@ from django.db import models
 from django.utils import timezone
 from accounts.models import Company
 
+
+class NotificationPreference(models.Model):
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='notification_preferences')
+    email_enabled = models.BooleanField(default=False)
+    leave_events = models.BooleanField(default=True)
+    payroll_events = models.BooleanField(default=True)
+    hr_events = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class NotificationDelivery(models.Model):
+    STATUS = [('pending', 'Pending'), ('processing', 'Processing'), ('sent', 'Sent'), ('failed', 'Failed')]
+    notification = models.ForeignKey('HRNotification', on_delete=models.CASCADE, related_name='deliveries')
+    recipient = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='notification_deliveries')
+    email = models.EmailField()
+    subject = models.CharField(max_length=255)
+    body = models.TextField()
+    status = models.CharField(max_length=20, choices=STATUS, default='pending')
+    attempts = models.PositiveIntegerField(default=0)
+    next_attempt_at = models.DateTimeField(default=timezone.now)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['created_at']
+        constraints = [models.UniqueConstraint(fields=['notification', 'recipient'], name='unique_notification_delivery_recipient')]
+        indexes = [models.Index(fields=['status', 'next_attempt_at'])]
+
 class HRNotification(models.Model):
     LEVELS=[('info','Info'),('success','Success'),('warning','Warning'),('danger','Urgent')]
     TYPES=[('compliance','Compliance'),('contract','Contract'),('onboarding','Onboarding'),('leave','Leave'),('employee','Employee'),('payroll','Payroll'),('system','System')]
