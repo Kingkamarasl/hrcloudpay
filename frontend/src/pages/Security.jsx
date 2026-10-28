@@ -14,6 +14,7 @@ const CONTROLS = [
   ['04', 'Controlled statutory workflow', 'Filing obligations move through review, approval, payment evidence, submission, and close — with checks at every critical transition.'],
   ['05', 'Compliance evidence', 'Payroll-to-obligation reconciliation, filing calendars, country reports, compliance packs, and document alerts keep operational evidence together.'],
   ['06', 'Protected integrations', 'Integration secrets are encrypted and managed separately from operational records. Banking credentials are not stored in HRCloudPay.'],
+  ['07', 'Biometric terminal ingestion', 'Attendance can be captured from fingerprint, face, iris and card terminals over the ZKTeco ADMS protocol. The bridge forwards the terminal PIN; the server applies the device match policy, so a terminal can never attribute hours to the wrong person. Device API keys authenticate every punch.'],
 ];
 
 const GOVERNANCE = [

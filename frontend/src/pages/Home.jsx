@@ -65,9 +65,9 @@ function HeroWorkspace() {
 }
 
 const PILLARS = [
-  ['01', 'Employee Management', 'One record per employee: contracts, documents, job details, employment history and status, in one place.', 'People'],
-  ['02', 'Automated Payroll', 'Run pay runs from contracts, attendance, approved leave, overtime, insurance and advances, with a clear approval trail.', 'Payroll'],
-  ['03', 'Attendance & Time Tracking', 'Check-in and check-out, attendance logs, timesheets and shifts, feeding payroll directly.', 'Time'],
+  ['01', 'Employee Management', 'One record per employee: contracts, documents, job details, employment history and status, plus a self-service portal for payslips, attendance and leave, in one place.', 'People'],
+  ['02', 'Automated Payroll', 'Run pay runs from contracts, attendance, approved leave, overtime, insurance and advances, with a clear approval trail and idempotent processing.', 'Payroll'],
+  ['03', 'Attendance & Time Tracking', 'Check-in and check-out, attendance logs, timesheets and shifts, plus biometric terminal ingestion (ZKTeco / ADMS), feeding payroll directly.', 'Time'],
   ['04', 'Leave Management', 'Leave types, balances and requests with team approvals, so time off is recorded rather than remembered.', 'Leave'],
   ['05', 'Compliance & Security', 'Country-specific statutory rules, an append-only audit chain, and role-based access on sensitive actions.', 'Trust'],
   ['06', 'AI-Powered HR Assistant', 'Ask questions about people, leave, attendance, payroll and recruitment, and get grounded answers with citations.', 'AI'],
@@ -109,7 +109,7 @@ export default function Home() {
               <Link className="ledger-btn ledger-btn-gold" to="/register">{managedHero.primary_cta} <span>→</span></Link>
               <Link className="ledger-btn ledger-btn-outline" to="/platform">{managedHero.secondary_cta}</Link>
             </div>
-            <div className="hc-hero-trust"><span>✓ AI-assisted HR</span><span>✓ Employee 360°</span><span>✓ Payroll &amp; compliance</span><span>✓ Role-based access</span></div>
+            <div className="hc-hero-trust"><span>✓ AI-assisted HR</span><span>✓ Employee 360°</span><span>✓ Payroll &amp; compliance</span><span>✓ Biometric attendance</span><span>✓ Employee self-service</span><span>✓ Role-based access</span></div>
           </div>
           <HeroWorkspace />
         </div>
