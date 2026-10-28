@@ -15,12 +15,23 @@ from django.utils import timezone
 logger = logging.getLogger(__name__)
 
 
+def _in_managed_department(user, qs, prefix=''):
+    """Scope a queryset to the manager's department.
+
+    Matches both the legacy ``department`` string and ``department_obj``; see
+    ``employees.models.department_match_q``. A manager with no department gets
+    no rows rather than the whole company.
+    """
+    from employees.models import department_match_q
+    return qs.filter(department_match_q(user.managed_department, prefix))
+
+
 def _scope_employees(user, qs):
     qs = qs.filter(company=user.company)
     if user.role == 'employee':
         return qs.filter(user=user)
     if user.role == 'department_manager':
-        return qs.filter(department_obj__name=user.managed_department)
+        return _in_managed_department(user, qs)
     return qs
 
 
@@ -55,7 +66,7 @@ def current_leave(user):
     if user.role == 'employee':
         qs = qs.filter(employee__user=user)
     elif user.role == 'department_manager':
-        qs = qs.filter(employee__department_obj__name=user.managed_department)
+        qs = _in_managed_department(user, qs, 'employee__')
     rows = [{'employee': r.employee.full_name, 'leave_type': r.get_leave_type_display(),
              'start_date': r.start_date.isoformat(), 'end_date': r.end_date.isoformat()} for r in qs[:100]]
     return {'tool': 'current_leave', 'count': len(rows), 'employees': rows}
@@ -72,7 +83,7 @@ def expiring_contracts(user, days=30):
     if user.role == 'employee':
         qs = qs.filter(employee__user=user)
     elif user.role == 'department_manager':
-        qs = qs.filter(employee__department_obj__name=user.managed_department)
+        qs = _in_managed_department(user, qs, 'employee__')
     rows = [{'employee': c.employee.full_name, 'contract_type': c.get_contract_type_display(),
              'end_date': c.end_date.isoformat()} for c in qs.order_by('end_date')[:100]]
     return {'tool': 'expiring_contracts', 'days': days, 'count': len(rows), 'contracts': rows}
@@ -104,7 +115,7 @@ def attendance_summary(user):
     if user.role == 'employee':
         qs = qs.filter(employee__user=user)
     elif user.role == 'department_manager':
-        qs = qs.filter(employee__department_obj__name=user.managed_department)
+        qs = _in_managed_department(user, qs, 'employee__')
     values = {status: qs.filter(status=status).count() for status in ('present', 'absent', 'half_day', 'leave')}
     return {'tool': 'attendance_summary', 'from': first.isoformat(), 'to': today.isoformat(), 'records': qs.count(), **values}
 
@@ -182,7 +193,7 @@ def attendance_today(user):
     if user.role == 'employee':
         qs = qs.filter(employee__user=user)
     elif user.role == 'department_manager':
-        qs = qs.filter(employee__department_obj__name=user.managed_department)
+        qs = _in_managed_department(user, qs, 'employee__')
     rows = [{'employee': a.employee.full_name, 'status': a.get_status_display(),
              'check_in': a.check_in.isoformat() if a.check_in else None,
              'check_out': a.check_out.isoformat() if a.check_out else None} for a in qs[:200]]

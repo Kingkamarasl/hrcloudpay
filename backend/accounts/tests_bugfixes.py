@@ -12,7 +12,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import Company, User
 from accounts.platform_models import Subscription
-from employees.models import Employee
+from employees.models import Department, Employee
 from leave.models import LeaveBalance, LeaveRequest
 
 
@@ -166,6 +166,65 @@ class LeaveApprovalGuardTests(TestCase):
         }, format='json')
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(response.data['days_requested'], 5)
+
+
+class UnlinkedEmployeeLeaveScopeTests(TestCase):
+    """An employee account with no Employee row sees no leave, not everyone's."""
+
+    def setUp(self):
+        self.company = make_company('Unlinked Co', 'unlinked@example.com')
+        self.colleague = Employee.objects.create(
+            company=self.company, employee_code='L2', first_name='Col', last_name='League',
+            email='colleague@example.com', base_salary=1000,
+        )
+        LeaveRequest.objects.create(
+            employee=self.colleague, leave_type='annual',
+            start_date='2026-09-01', end_date='2026-09-02',
+        )
+        self.user = User.objects.create_user(
+            username='unlinked', email='unlinked@example.com',
+            password='StrongPassword123!', company=self.company, role='employee',
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def test_list_is_empty_rather_than_company_wide(self):
+        response = self.client.get('/api/leave/requests/')
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = response.data['results'] if isinstance(response.data, dict) else response.data
+        self.assertEqual(rows, [])
+
+    def test_colleague_request_cannot_be_approved(self):
+        request = LeaveRequest.objects.get(employee=self.colleague)
+        response = self.client.post(
+            f'/api/leave/requests/{request.id}/approve/', {}, format='json')
+        self.assertIn(response.status_code, (403, 404))
+
+
+class EmploymentStatusChoiceTests(TestCase):
+    """The employee form offers five statuses; the model must accept all five."""
+
+    def setUp(self):
+        self.company = make_company('Status Co', 'status@example.com')
+        self.hr = User.objects.create_user(
+            username='status-hr', email='status-hr@example.com',
+            password='StrongPassword123!', company=self.company, role='hr',
+        )
+        self.employee = Employee.objects.create(
+            company=self.company, employee_code='S1', first_name='Sam', last_name='Status',
+            email='sam@example.com', base_salary=1000,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.hr)
+
+    def test_every_interface_status_is_accepted(self):
+        for status in ('active', 'on_leave', 'suspended', 'terminated', 'resigned'):
+            response = self.client.patch(
+                f'/api/employees/employees/{self.employee.id}/',
+                {'employment_status': status}, format='json')
+            self.assertEqual(response.status_code, 200, (status, response.data))
+            self.employee.refresh_from_db()
+            self.assertEqual(self.employee.employment_status, status)
 
 
 class RoutingTests(TestCase):
@@ -485,3 +544,59 @@ class SeedCommandTests(TestCase):
         from regional.models import StatutoryRule
         self.assertGreater(StatutoryRule.objects.filter(rule_type='paye').count(), 0)
         self.assertIn('PAYE', out.getvalue())
+
+
+class DepartmentObjScopeTests(TestCase):
+    """Managers must see the team assigned through the employee form.
+
+    The form writes ``department_obj``; imports and older rows write the legacy
+    free-text ``department``. Scoping that read only the string made a roster
+    assigned through the UI look empty to its manager.
+    """
+
+    def setUp(self):
+        self.company = make_company('Dept Obj Co', 'deptobj@example.com')
+        self.department = Department.objects.create(
+            company=self.company, name='Engineering')
+        self.employee = Employee.objects.create(
+            company=self.company, employee_code='D1', first_name='Dee',
+            last_name='Vee', email='dee@example.com', base_salary=1000,
+            department='', department_obj=self.department,
+        )
+        self.leave = LeaveRequest.objects.create(
+            employee=self.employee, leave_type='annual',
+            start_date='2026-09-10', end_date='2026-09-11',
+        )
+        self.manager = User.objects.create_user(
+            username='dept-manager', email='dept-manager@example.com',
+            password='StrongPassword123!', company=self.company,
+            role='department_manager', managed_department='Engineering',
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.manager)
+
+    def _rows(self, response):
+        return response.data['results'] if isinstance(response.data, dict) else response.data
+
+    def test_leave_list_includes_the_team(self):
+        response = self.client.get('/api/leave/requests/')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual([row['id'] for row in self._rows(response)], [self.leave.id])
+
+    def test_leave_can_be_approved(self):
+        response = self.client.post(
+            f'/api/leave/requests/{self.leave.id}/approve/', {}, format='json')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.leave.refresh_from_db()
+        self.assertEqual(self.leave.status, 'approved')
+
+    def test_employee_list_includes_the_team(self):
+        response = self.client.get('/api/employees/employees/')
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIn(self.employee.id, [row['id'] for row in self._rows(response)])
+
+    def test_a_different_department_still_sees_nothing(self):
+        self.manager.managed_department = 'Sales'
+        self.manager.save(update_fields=['managed_department'])
+        response = self.client.get('/api/leave/requests/')
+        self.assertEqual(self._rows(response), [])

@@ -17,7 +17,7 @@ from accounts.permissions import (
 from accounts.audit import audit
 from accounts.idempotency import begin as begin_idempotency, complete as complete_idempotency
 from security.step_up import RequiresFreshMfa
-from employees.models import Employee
+from employees.models import Employee, EMPLOYED_STATUSES
 
 from .models import PayrollConfig, PayrollRun, Payslip
 from .serializers import PayrollConfigSerializer, PayrollRunSerializer, PayslipSerializer
@@ -103,7 +103,7 @@ class PreviewPayrollRunView(APIView):
         if not config:
             return Response({'detail': 'Complete payroll setup before previewing payroll.'}, status=400)
         calculation_config, version = effective_config_for(config, payroll_run.period_end)
-        employees = list(Employee.objects.filter(company=company, employment_status='active'))
+        employees = list(Employee.objects.filter(company=company, employment_status__in=EMPLOYED_STATUSES))
         totals = {key: Decimal('0') for key in ('gross', 'tax', 'contributions', 'deductions', 'net')}
         rows, exceptions = [], []
         for employee in employees:
@@ -169,7 +169,7 @@ class ProcessPayrollRunView(APIView):
                 config_version = ensure_config_version(config, user=request.user, effective_from=payroll_run.period_end)
                 calculation_config, config_version = effective_config_for(config, payroll_run.period_end)
 
-            employees = Employee.objects.filter(company=company, employment_status='active')
+            employees = Employee.objects.filter(company=company, employment_status__in=EMPLOYED_STATUSES)
             from .models import OvertimeEntry, SalaryAdvance, AdvanceRecovery
             for employee in employees:
                 result = calculate_payslip(employee, calculation_config, payroll_run=payroll_run)

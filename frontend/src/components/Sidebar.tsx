@@ -20,12 +20,13 @@ const GROUPS: NavGroup[] = [
   { title: 'Overview', links: [
     { to: '/dashboard', label: 'Dashboard', icon: 'grid', end: true },
     { to: '/my-workspace', label: 'My workspace', icon: 'user', roles: ['employee'] },
-    { to: '/ai', label: 'AI Copilot', icon: 'sparkles' },
+    { to: '/ai', label: 'AI Copilot', icon: 'sparkles', roles: ['owner','admin','hr','finance','department_manager'] },
     { to: '/ai-drafts', label: 'Drafts for review', icon: 'file', roles: DRAFT_MANAGER_ROLES },
     { to: '/knowledge', label: 'Knowledge Center', icon: 'file', roles: KNOWLEDGE_MANAGER_ROLES },
   ] },
   { title: 'People', links: [
     { to: '/my-profile', label: 'My profile', icon: 'user', roles: ['employee'] },
+    { to: '/my-payslips', label: 'My payslips', icon: 'wallet', roles: ['employee'] },
     { to: '/my-documents', label: 'My documents', icon: 'file', roles: ['employee'] },
     { to: '/employees', label: 'Employees', icon: 'users', roles: ['owner','admin','hr','department_manager'] },
     { to: '/request-tracking', label: 'Request tracking', icon: 'bell', roles: ['owner','admin','hr','department_manager','employee'] },

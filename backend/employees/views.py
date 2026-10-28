@@ -13,7 +13,7 @@ from rest_framework.exceptions import ValidationError
 from accounts.permissions import CanManageHR, IsCompanyActive, IsCompanyMember
 from accounts.audit import audit, changed_fields, snapshot_fields
 from security.step_up import mfa_enrolled, mfa_is_fresh as fresh_mfa
-from .models import Department, Contract, Employee, EmployeeAllowance, EmployeeDeduction, WarningLetter, EmployeePersonalDetails, EmergencyContact, EmploymentEvent, EmployeeDocument, RequiredDocumentRule, EmployeeStatutoryProfile, HRRequest
+from .models import Department, Contract, Employee, EmployeeAllowance, EmployeeDeduction, WarningLetter, EmployeePersonalDetails, EmergencyContact, EmploymentEvent, EmployeeDocument, RequiredDocumentRule, EmployeeStatutoryProfile, HRRequest, department_match_q
 from .serializers import DepartmentSerializer, ContractSerializer, EmployeeAllowanceSerializer, EmployeeDeductionSerializer, EmployeeSerializer, WarningLetterSerializer, EmployeePersonalDetailsSerializer, EmergencyContactSerializer, EmploymentEventSerializer, EmployeeDocumentSerializer, RequiredDocumentRuleSerializer, EmployeeStatutoryProfileSerializer, HRRequestSerializer
 from .services import EmployeeService, ContractService
 
@@ -23,8 +23,11 @@ class ScopedMixin:
         if user.role == 'employee' and user.employee_id is not None:
             return qs.filter(employee_id=user.employee_id) if hasattr(qs.model, 'employee_id') else qs.filter(id=user.employee_id)
         if user.role == 'department_manager':
-            dept = user.managed_department
-            return qs.filter(employee__department=dept) if hasattr(qs.model, 'employee_id') else qs.filter(department__name=dept)
+            if not user.managed_department:
+                return qs.none()
+            if hasattr(qs.model, 'employee_id'):
+                return qs.filter(department_match_q(user.managed_department, 'employee__'))
+            return qs.filter(name=user.managed_department)
         return qs
 
 class HRRequestViewSet(viewsets.ModelViewSet):
@@ -42,7 +45,7 @@ class HRRequestViewSet(viewsets.ModelViewSet):
         qs = HRRequest.objects.filter(employee__company=user.company)
         if user.role == 'department_manager':
             # Managers only see requests they created or for their department
-            return qs.filter(Q(requested_by=user) | Q(employee__department=user.managed_department))
+            return qs.filter(Q(requested_by=user) | department_match_q(user.managed_department, 'employee__'))
         return qs
 
     @action(detail=True, methods=['post'])
@@ -152,9 +155,9 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         qs = Employee.objects.filter(company=self.request.user.company).select_related('department_obj').prefetch_related('contracts','warning_letters','attendance_records','leave_requests','break_requests','personal_details','emergency_contacts','employment_events','statutory_profile')
         user = self.request.user
         if user.role == 'employee' and user.employee_id is not None: qs = qs.filter(id=user.employee_id)
-        elif user.role == 'department_manager': qs = qs.filter(department=user.managed_department)
+        elif user.role == 'department_manager': qs = qs.filter(department_match_q(user.managed_department))
         dept = self.request.query_params.get('department')
-        if dept: qs = qs.filter(department__iexact=dept)
+        if dept: qs = qs.filter(department_match_q(dept))
         status = self.request.query_params.get('employment_status')
         if status: qs = qs.filter(employment_status=status)
         # Search by ID number, employee code, name, email, phone
@@ -699,7 +702,7 @@ class WarningLetterViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = ScopedMixin.scope(self, WarningLetter.objects.filter(employee__company=self.request.user.company).select_related('employee','issued_by'))
         dept = self.request.query_params.get('department')
-        if dept: qs = qs.filter(employee__department__iexact=dept)
+        if dept: qs = qs.filter(department_match_q(dept, 'employee__'))
         return qs
 
 
@@ -795,7 +798,7 @@ class ComplianceDashboardView(viewsets.ViewSet):
         if request.user.role == 'employee' and request.user.employee_id is not None:
             employees = Employee.objects.filter(id=request.user.employee_id)
         elif request.user.role == 'department_manager':
-            employees = Employee.objects.filter(company=request.user.company, department=request.user.managed_department)
+            employees = Employee.objects.filter(company=request.user.company).filter(department_match_q(request.user.managed_department))
         else:
             employees = Employee.objects.filter(company=request.user.company)
         employees = employees.select_related('department_obj').prefetch_related('documents','contracts')
@@ -837,7 +840,7 @@ class EmployeePersonalDetailsViewSet(viewsets.ModelViewSet):
         if user.role == 'employee' and user.employee_id is not None:
             qs = qs.filter(employee_id=user.employee_id)
         elif user.role == 'department_manager':
-            qs = qs.filter(employee__department=user.managed_department)
+            qs = qs.filter(department_match_q(user.managed_department, 'employee__'))
         return qs
 
     def _can_write(self, employee):
@@ -879,7 +882,7 @@ class EmergencyContactViewSet(viewsets.ModelViewSet):
         if user.role == 'employee' and user.employee_id is not None:
             qs = qs.filter(employee_id=user.employee_id)
         elif user.role == 'department_manager':
-            qs = qs.filter(employee__department=user.managed_department)
+            qs = qs.filter(department_match_q(user.managed_department, 'employee__'))
         employee_id = self.request.query_params.get('employee')
         if employee_id: qs = qs.filter(employee_id=employee_id)
         return qs
@@ -930,7 +933,7 @@ class EmploymentEventViewSet(viewsets.ModelViewSet):
         if user.role == 'employee' and user.employee_id is not None:
             qs = qs.filter(employee_id=user.employee_id)
         elif user.role == 'department_manager':
-            qs = qs.filter(employee__department=user.managed_department)
+            qs = qs.filter(department_match_q(user.managed_department, 'employee__'))
         employee_id = self.request.query_params.get('employee')
         if employee_id: qs = qs.filter(employee_id=employee_id)
         return qs
@@ -955,7 +958,7 @@ class RequiredDocumentRuleViewSet(viewsets.ModelViewSet):
         qs = RequiredDocumentRule.objects.filter(company=self.request.user.company).select_related('employee')
         user = self.request.user
         if user.role == 'department_manager':
-            qs = qs.filter(employee__department=user.managed_department) | qs.filter(employee__isnull=True)
+            qs = qs.filter(department_match_q(user.managed_department, 'employee__') | Q(employee__isnull=True))
         return qs.distinct()
 
 

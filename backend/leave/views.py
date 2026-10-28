@@ -8,7 +8,7 @@ from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from accounts.permissions import CanApproveForDepartment, CanManageHR, CanManageHROrDepartment, IsCompanyActive, IsCompanyMember
 from accounts.audit import audit
-from employees.models import Employee
+from employees.models import Employee, EMPLOYED_STATUSES, department_match_q
 from .models import LeaveRequest, BreakRequest
 from .serializers import LeaveRequestSerializer, BreakRequestSerializer
 from .pdf import build_break_request_pdf, build_leave_request_pdf
@@ -19,10 +19,18 @@ class BaseRequestViewSet(viewsets.ModelViewSet):
 
     def scoped(self, qs):
         u = self.request.user
-        if u.role == 'employee' and hasattr(u, 'employee_profile'):
-            return qs.filter(employee=u.employee_profile)
+        if u.role == 'employee':
+            # A role is not a profile. An employee account that HR never linked
+            # to an Employee row used to fall through this branch entirely and
+            # inherit the company-wide queryset, exposing every colleague's
+            # leave and break requests. No profile means no rows, not all rows.
+            if u.employee_id is None:
+                return qs.none()
+            return qs.filter(employee_id=u.employee_id)
         if u.role == 'department_manager':
-            return qs.filter(employee__department=u.managed_department)
+            if not u.managed_department:
+                return qs.none()
+            return qs.filter(department_match_q(u.managed_department, 'employee__'))
         return qs
 
     @staticmethod
@@ -236,7 +244,7 @@ class RunLeaveAccrualView(APIView):
         if not policies:
             return Response({'detail': 'Define accrual policies first.'}, status=400)
         count = 0
-        for emp in Employee.objects.filter(company=company, employment_status='active'):
+        for emp in Employee.objects.filter(company=company, employment_status__in=EMPLOYED_STATUSES):
             for pol in policies:
                 bal, _ = LeaveBalance.objects.get_or_create(
                     employee=emp, leave_type=pol.leave_type, defaults={'balance_days': 0},

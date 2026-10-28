@@ -7,7 +7,7 @@ Run via cron, e.g. on the 1st of each month:
 from decimal import Decimal
 from django.core.management.base import BaseCommand
 from accounts.models import Company
-from employees.models import Employee
+from employees.models import Employee, EMPLOYED_STATUSES
 from leave.models import LeaveAccrualPolicy, LeaveBalance
 
 
@@ -26,7 +26,7 @@ class Command(BaseCommand):
             policies = list(LeaveAccrualPolicy.objects.filter(company=company, accrue_monthly=True))
             if not policies:
                 continue
-            for emp in Employee.objects.filter(company=company, employment_status='active'):
+            for emp in Employee.objects.filter(company=company, employment_status__in=EMPLOYED_STATUSES):
                 for pol in policies:
                     bal, _ = LeaveBalance.objects.get_or_create(
                         employee=emp, leave_type=pol.leave_type, defaults={'balance_days': 0},

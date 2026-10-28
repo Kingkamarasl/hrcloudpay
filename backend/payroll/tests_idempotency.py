@@ -1,12 +1,21 @@
-from datetime import date
+import hashlib
+import json
+from datetime import date, timedelta
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
+from django.utils import timezone
 from rest_framework.test import APIClient
 
-from accounts.models import Company, User
+from accounts.models import Company, IdempotencyRecord, User
 from accounts.platform_models import Subscription
 from employees.models import Employee
 from payroll.models import PayrollConfig, PayrollRun, Payslip, TaxBracket
+
+
+def empty_body_hash():
+    return hashlib.sha256(
+        json.dumps({}, sort_keys=True, separators=(',', ':')).encode()
+    ).hexdigest()
 
 
 class PayrollIdempotencyTests(TestCase):
@@ -36,3 +45,47 @@ class PayrollIdempotencyTests(TestCase):
         response = self.client.post(path, {'preview': True}, format='json', HTTP_IDEMPOTENCY_KEY='process-body')
         self.assertEqual(response.status_code, 409)
         self.assertIn('different request body', response.data['detail'])
+
+    def _processing_record(self, key, started_at):
+        """The row a request leaves behind when its worker dies mid-flight."""
+        return IdempotencyRecord.objects.create(
+            company=self.company,
+            actor=self.user,
+            key=key,
+            operation=f'payroll.process:{self.run.id}',
+            request_hash=empty_body_hash(),
+            status='processing',
+            started_at=started_at,
+        )
+
+    @override_settings(IDEMPOTENCY_STALE_SECONDS=60)
+    def test_crashed_processing_key_is_taken_over_after_the_window(self):
+        path = f'/api/payroll/runs/{self.run.id}/process/'
+        record = self._processing_record('process-crashed', timezone.now() - timedelta(minutes=5))
+
+        response = self.client.post(path, {}, format='json', HTTP_IDEMPOTENCY_KEY='process-crashed')
+
+        self.assertEqual(response.status_code, 200)
+        record.refresh_from_db()
+        self.assertEqual(record.status, 'completed')
+        self.assertEqual(Payslip.objects.filter(payroll_run=self.run).count(), 1)
+
+    @override_settings(IDEMPOTENCY_STALE_SECONDS=60)
+    def test_live_processing_key_is_not_stolen(self):
+        path = f'/api/payroll/runs/{self.run.id}/process/'
+        self._processing_record('process-live', timezone.now())
+
+        response = self.client.post(path, {}, format='json', HTTP_IDEMPOTENCY_KEY='process-live')
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn('already being processed', response.data['detail'])
+        self.assertEqual(Payslip.objects.filter(payroll_run=self.run).count(), 0)
+
+    def test_on_leave_employees_stay_in_payroll(self):
+        Employee.objects.filter(company=self.company).update(employment_status='on_leave')
+        path = f'/api/payroll/runs/{self.run.id}/process/'
+
+        response = self.client.post(path, {}, format='json')
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(Payslip.objects.filter(payroll_run=self.run).count(), 1)

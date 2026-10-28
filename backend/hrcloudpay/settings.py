@@ -452,6 +452,12 @@ else:
 # biometrics.services.device_health.
 BIOMETRIC_SILENCE_HOURS = config('BIOMETRIC_SILENCE_HOURS', default=24, cast=int)
 
+# How long an Idempotency-Key may stay in 'processing' before a retry is allowed
+# to take it over. A crashed request used to reserve its key forever, so the same
+# payroll could never be retried. Keep this comfortably above the slowest real
+# payroll; too short a window would let a second request duplicate the work.
+IDEMPOTENCY_STALE_SECONDS = config('IDEMPOTENCY_STALE_SECONDS', default=900, cast=int)
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'security.authentication.SecurityCookieAuthentication',

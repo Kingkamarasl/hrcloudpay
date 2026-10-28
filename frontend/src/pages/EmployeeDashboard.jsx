@@ -21,6 +21,15 @@ function unwrap(value) {
   return value?.results ?? value ?? [];
 }
 
+// PayslipSerializer exposes the run's dates as payroll_period_start/end. The
+// dashboard used to read period_start/period_end, which never exist, so every
+// payslip rendered an empty date range.
+function periodLabel(slip) {
+  const start = slip?.payroll_period_start;
+  const end = slip?.payroll_period_end;
+  return start && end ? `${start} → ${end}` : '—';
+}
+
 export default function EmployeeDashboard() {
   const [profile, setProfile] = useState(null);
   const [payslips, setPayslips] = useState([]);
@@ -96,7 +105,7 @@ export default function EmployeeDashboard() {
       ) : (
         <>
           <div className="dash-stats">
-            <div className="dash-stat"><div className="stat-icon"><Icon name="wallet" /></div><div className="stat-copy"><span>Latest net pay</span><strong>{latestPayslip ? money(latestPayslip.net_salary) : '—'}</strong><small>{latestPayslip ? `${latestPayslip.period_start} → ${latestPayslip.period_end}` : 'No payslip yet'}</small></div></div>
+            <div className="dash-stat"><div className="stat-icon"><Icon name="wallet" /></div><div className="stat-copy"><span>Latest net pay</span><strong>{latestPayslip ? money(latestPayslip.net_salary) : '—'}</strong><small>{latestPayslip ? periodLabel(latestPayslip) : 'No payslip yet'}</small></div></div>
             <div className="dash-stat"><div className="stat-icon"><Icon name="clock" /></div><div className="stat-copy"><span>Attendance records</span><strong>{attendance.length}</strong><small>Visible to you</small></div></div>
             <div className="dash-stat"><div className="stat-icon"><Icon name="calendar" /></div><div className="stat-copy"><span>Pending leave</span><strong>{pendingLeave}</strong><small>Awaiting review</small></div></div>
             <div className="dash-stat"><div className="stat-icon"><Icon name="user" /></div><div className="stat-copy"><span>Job title</span><strong>{profile?.job_title || '—'}</strong><small>{profile?.effective_department || profile?.department || 'No department'}</small></div></div>
@@ -110,7 +119,7 @@ export default function EmployeeDashboard() {
                   {payslips.slice(0, 5).map((slip) => (
                     <div className="activity-row" key={slip.id}>
                       <div className="activity-icon"><Icon name="wallet" size={16} /></div>
-                      <div><strong>{slip.period_start} → {slip.period_end}</strong><small>Net pay {money(slip.net_salary)}</small></div>
+                      <div><strong>{periodLabel(slip)}</strong><small>Net pay {money(slip.net_salary)}</small></div>
                       <button className="btn-link" type="button" disabled={downloading === slip.id} onClick={() => downloadPayslip(slip.id)}>{downloading === slip.id ? 'Preparing…' : 'PDF'}</button>
                     </div>
                   ))}

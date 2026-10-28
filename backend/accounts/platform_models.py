@@ -252,6 +252,10 @@ class IdempotencyRecord(models.Model):
     resource_type = models.CharField(max_length=100, blank=True)
     resource_id = models.CharField(max_length=100, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    # When the current attempt started. ``created_at`` only says when the key was
+    # first seen, so it cannot tell a live attempt from one whose worker died
+    # mid-flight. Every takeover refreshes this.
+    started_at = models.DateTimeField(default=timezone.now)
     completed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:

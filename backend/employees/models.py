@@ -8,8 +8,42 @@ from accounts.models import Company
 
 EMPLOYMENT_STATUS_CHOICES = [
     ('active', 'Active'),
+    ('on_leave', 'On leave'),
+    ('suspended', 'Suspended'),
     ('terminated', 'Terminated'),
+    ('resigned', 'Resigned'),
 ]
+
+# Statuses that are still employed: they stay in payroll and keep accruing
+# leave. Suspended employees are deliberately excluded until the suspension is
+# resolved; the contract-expiry code already treats 'resigned' as a departure.
+EMPLOYED_STATUSES = ('active', 'on_leave')
+
+
+def department_match_q(name, prefix=''):
+    """Q matching an employee's department through either assignment path.
+
+    An employee carries a legacy free-text ``department`` and the newer
+    ``department_obj`` foreign key. The employee form writes the foreign key,
+    imports and older rows write the string, and nothing keeps the two in sync.
+    A manager scoped by only one of them sees half their team - frequently the
+    empty half, because the roster they were just assigned through the form only
+    updated ``department_obj``.
+
+    ``prefix`` is the relation path to the employee from the model being
+    filtered: ``''`` for Employee itself, ``'employee__'`` for Attendance,
+    LeaveRequest and friends.
+
+    A blank name matches nothing: a department manager with no department must
+    never fall through to a company-wide queryset.
+    """
+    name = (name or '').strip()
+    if not name:
+        return models.Q(pk__in=[])
+    return (
+        models.Q(**{f'{prefix}department__iexact': name})
+        | models.Q(**{f'{prefix}department_obj__name__iexact': name})
+    )
 
 EMPLOYMENT_CATEGORY_CHOICES = [
     ('casual', 'Casual'),
@@ -140,6 +174,21 @@ class Employee(models.Model):
     @property
     def effective_department(self):
         return self.department_obj.name if self.department_obj_id else self.department
+
+    def in_department(self, name):
+        """Whether this employee belongs to the named department.
+
+        Checks both assignment paths, matching ``department_match_q``: the
+        permission check and the queryset that produced the row must agree, or
+        a manager can see a record they cannot act on (or the reverse).
+        """
+        if not name:
+            return False
+        wanted = str(name).strip().casefold()
+        names = [self.department]
+        if self.department_obj_id:
+            names.append(self.department_obj.name)
+        return any((value or '').strip().casefold() == wanted for value in names)
 
     @property
     def current_contract(self):

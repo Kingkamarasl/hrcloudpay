@@ -126,7 +126,7 @@ def _is_in_managers_team(user, instance, kind):
     employee = instance if kind.model == 'Employee' else getattr(instance, 'employee', None)
     if employee is None:
         return False
-    return bool(employee.department) and employee.department == user.managed_department
+    return employee.in_department(user.managed_department)
 
 
 def may_access(user, name):

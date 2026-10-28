@@ -164,7 +164,7 @@ class CanManageHROrDepartment(BasePermission):
         if user.role in ('owner', 'admin', 'hr'):
             return True
         if user.role == 'department_manager':
-            return bool(user.managed_department) and employee.department == user.managed_department
+            return bool(user.managed_department) and employee.in_department(user.managed_department)
         if user.role == 'employee' and hasattr(user, 'employee_profile'):
             return employee.id == user.employee_id
         return False
@@ -214,7 +214,7 @@ class CanApproveForDepartment(BasePermission):
         if user.role in ('owner', 'admin', 'hr'):
             return True
         if user.role == 'department_manager':
-            return bool(user.managed_department) and obj.employee.department == user.managed_department
+            return bool(user.managed_department) and obj.employee.in_department(user.managed_department)
         return False
 
 

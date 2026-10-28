@@ -11,6 +11,7 @@ from rest_framework.views import APIView
 
 from accounts.permissions import CanManageHROrDepartment, IsCompanyActive, IsCompanyMember
 from accounts.audit import audit, changed_fields, snapshot_fields
+from employees.models import department_match_q
 
 from .models import STATUS_CHOICES, Attendance
 from .serializers import AttendanceSerializer
@@ -145,7 +146,7 @@ class AttendanceViewSet(viewsets.ModelViewSet):
         if user.role == 'department_manager':
             if not user.managed_department:
                 return qs.none()
-            return qs.filter(employee__department=user.managed_department)
+            return qs.filter(department_match_q(user.managed_department, 'employee__'))
 
         employee_id = self.request.query_params.get('employee')
         if employee_id:
@@ -271,7 +272,7 @@ class BulkMarkView(APIView):
                     'employee_ids': 'One or more employees are not in your company.',
                 })
         if department:
-            employees = employees.filter(department=department)
+            employees = employees.filter(department_match_q(department))
 
         employees = list(employees.order_by('id'))
         if not employees:

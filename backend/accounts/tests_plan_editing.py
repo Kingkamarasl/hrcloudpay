@@ -176,17 +176,24 @@ class PlanEditFormTests(TestCase):
             pathlib.Path(__file__).resolve().parents[2]
             / 'frontend' / 'src' / 'pages' / 'PlatformAdmin.jsx'
         ).read_text(encoding='utf-8')
+        # Scope the checks to the Plans component. PlatformAdmin.jsx also
+        # contains the Users tab, which legitimately has an `onEdit` prop for
+        # opening the user editor; asserting over the whole file made this test
+        # fail when that unrelated feature landed.
+        start = self.source.index('function Plans(')
+        end = self.source.index('export default function PlatformAdmin')
+        self.plans_source = self.source[start:end]
 
     def test_the_draft_is_held_where_the_inputs_read_it(self):
         """`onEdit` pushed the edit to a parent that never read it, leaving the
         inputs bound to the loaded object and therefore untypable."""
         # Line comments first: the component's own header explains why onEdit
         # was wrong, and that explanation must not trip its own check.
-        rendered = '\n'.join(l for l in self.source.splitlines()
+        rendered = '\n'.join(l for l in self.plans_source.splitlines()
                              if not l.strip().startswith('//'))
         self.assertNotIn('onEdit', rendered)
         self.assertNotIn('planEdit', rendered)
         self.assertIn('setDraft({...p})', rendered)
 
     def test_save_posts_the_draft_not_the_loaded_plan(self):
-        self.assertIn('onSave({...d,plan:d.id})', self.source)
+        self.assertIn('onSave({...d,plan:d.id})', self.plans_source)
