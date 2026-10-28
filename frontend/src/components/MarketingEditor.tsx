@@ -348,7 +348,7 @@ function SectionEditor({ section, definition, index, total, onChange, onRemove, 
                   }}
                   onDuplicate={() => {
                     const next = items.slice();
-                    next.splice(i + 1, 0, JSON.parse(JSON.stringify(items[i])));
+                    next.splice(i + 1, 0, structuredClone(items[i]));
                     onChange({ ...section, [repeated.key]: next });
                   }}
                   onUp={() => moveItem(section, repeated.key, items, i, -1, onChange)}
@@ -390,7 +390,7 @@ function SectionEditor({ section, definition, index, total, onChange, onRemove, 
                   }}
                   onDuplicate={() => {
                     const next = noteRows.slice();
-                    next.splice(i + 1, 0, JSON.parse(JSON.stringify(noteRows[i])));
+                    next.splice(i + 1, 0, structuredClone(noteRows[i]));
                     onChange({ ...section, [notes.key]: next });
                   }}
                   onUp={() => moveItem(section, notes.key, noteRows, i, -1, onChange)}
@@ -493,7 +493,7 @@ export default function MarketingEditor({ payload, onSave, onCreate, onDelete, o
   function duplicateSection(index: number) {
     const source = sections[index];
     if (!source) return;
-    const copy = JSON.parse(JSON.stringify(source));
+    const copy = structuredClone(source);
     const next = sections.slice();
     next.splice(index + 1, 0, copy);
     setSections(mark(next));
