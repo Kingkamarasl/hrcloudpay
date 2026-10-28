@@ -178,6 +178,7 @@ interface RepeatedItemProps {
   itemList?: { key: string; limit: number };
   itemExtra?: { key: string };
   onRemove: () => void;
+  onDuplicate: () => void;
   onUp: () => void;
   onDown: () => void;
   index: number;
@@ -190,7 +191,7 @@ interface RepeatedItemProps {
 // section has one (pricing plan features), a toggle, and its own move/delete.
 function RepeatedItem({
   label, fields, values, onChange, itemList, itemExtra,
-  onRemove, onUp, onDown, index, isFirst, isLast, idPrefix,
+  onRemove, onDuplicate, onUp, onDown, index, isFirst, isLast, idPrefix,
 }: RepeatedItemProps) {
   return (
     <div className="me-item">
@@ -199,6 +200,7 @@ function RepeatedItem({
         <div className="me-item-actions">
           <button type="button" className="btn btn-secondary me-mini" onClick={onUp} disabled={isFirst} aria-label={`Move ${label.toLowerCase()} ${index + 1} up`}>↑</button>
           <button type="button" className="btn btn-secondary me-mini" onClick={onDown} disabled={isLast} aria-label={`Move ${label.toLowerCase()} ${index + 1} down`}>↓</button>
+          <button type="button" className="btn btn-secondary me-mini" onClick={onDuplicate} aria-label={`Duplicate ${label.toLowerCase()} ${index + 1}`}>Duplicate</button>
           <button type="button" className="btn btn-secondary me-mini me-danger" onClick={onRemove} aria-label={`Remove ${label.toLowerCase()} ${index + 1}`}>Remove</button>
         </div>
       </div>
@@ -271,11 +273,12 @@ interface SectionEditorProps {
   total: number;
   onChange: (next: EditorValues) => void;
   onRemove: () => void;
+  onDuplicate: () => void;
   onMove: (index: number, delta: number) => void;
   maxRepeated: number;
 }
 
-function SectionEditor({ section, definition, index, total, onChange, onRemove, onMove, maxRepeated }: SectionEditorProps) {
+function SectionEditor({ section, definition, index, total, onChange, onRemove, onDuplicate, onMove, maxRepeated }: SectionEditorProps) {
   const [open, setOpen] = useState(index === 0);
   const idPrefix = `sec-${index}-${String(section.type)}`;
   const repeated = definition.repeated;
@@ -305,6 +308,7 @@ function SectionEditor({ section, definition, index, total, onChange, onRemove, 
         <div className="me-item-actions">
           <button type="button" className="btn btn-secondary me-mini" onClick={() => onMove(index, -1)} disabled={index === 0} aria-label={`Move ${definition.label.toLowerCase()} section up`}>↑</button>
           <button type="button" className="btn btn-secondary me-mini" onClick={() => onMove(index, 1)} disabled={index === total - 1} aria-label={`Move ${definition.label.toLowerCase()} section down`}>↓</button>
+          <button type="button" className="btn btn-secondary me-mini" onClick={onDuplicate} aria-label={`Duplicate ${definition.label.toLowerCase()} section`}>Duplicate</button>
           <button type="button" className="btn btn-secondary me-mini me-danger" onClick={onRemove} aria-label={`Remove ${definition.label.toLowerCase()} section`}>Remove</button>
         </div>
       </div>
@@ -337,7 +341,16 @@ function SectionEditor({ section, definition, index, total, onChange, onRemove, 
                   isFirst={i === 0}
                   isLast={i === items.length - 1}
                   onChange={(next) => setItem(i, next)}
-                  onRemove={() => onChange({ ...section, [repeated.key]: items.filter((_, x) => x !== i) })}
+                  onRemove={() => {
+                    if (typeof window !== 'undefined'
+                      && !window.confirm('Remove this item?')) return;
+                    onChange({ ...section, [repeated.key]: items.filter((_, x) => x !== i) });
+                  }}
+                  onDuplicate={() => {
+                    const next = items.slice();
+                    next.splice(i + 1, 0, JSON.parse(JSON.stringify(items[i])));
+                    onChange({ ...section, [repeated.key]: next });
+                  }}
                   onUp={() => moveItem(section, repeated.key, items, i, -1, onChange)}
                   onDown={() => moveItem(section, repeated.key, items, i, 1, onChange)}
                 />
@@ -370,7 +383,16 @@ function SectionEditor({ section, definition, index, total, onChange, onRemove, 
                     nextNotes[i] = next;
                     onChange({ ...section, [notes.key]: nextNotes });
                   }}
-                  onRemove={() => onChange({ ...section, [notes.key]: noteRows.filter((_, x) => x !== i) })}
+                  onRemove={() => {
+                    if (typeof window !== 'undefined'
+                      && !window.confirm('Remove this item?')) return;
+                    onChange({ ...section, [notes.key]: noteRows.filter((_, x) => x !== i) });
+                  }}
+                  onDuplicate={() => {
+                    const next = noteRows.slice();
+                    next.splice(i + 1, 0, JSON.parse(JSON.stringify(noteRows[i])));
+                    onChange({ ...section, [notes.key]: next });
+                  }}
                   onUp={() => moveItem(section, notes.key, noteRows, i, -1, onChange)}
                   onDown={() => moveItem(section, notes.key, noteRows, i, 1, onChange)}
                 />
@@ -462,7 +484,19 @@ export default function MarketingEditor({ payload, onSave, onCreate, onDelete, o
     setSections(mark(sections.map((section, i) => (i === index ? next : section))));
   }
   function removeSection(index: number) {
+    const section = sections[index];
+    const label = section?.type ? String(section.type) : 'section';
+    if (typeof window !== 'undefined'
+      && !window.confirm(`Remove this ${label} section? Its content will be lost unless you have saved a draft.`)) return;
     setSections(mark(sections.filter((_, i) => i !== index)));
+  }
+  function duplicateSection(index: number) {
+    const source = sections[index];
+    if (!source) return;
+    const copy = JSON.parse(JSON.stringify(source));
+    const next = sections.slice();
+    next.splice(index + 1, 0, copy);
+    setSections(mark(next));
   }
   function moveSection(index: number, delta: number) {
     const target = index + delta;
@@ -704,6 +738,7 @@ export default function MarketingEditor({ payload, onSave, onCreate, onDelete, o
                       maxRepeated={payload?.schema?.max_repeated || 60}
                       onChange={(next) => setSection(index, next)}
                       onRemove={() => removeSection(index)}
+                      onDuplicate={() => duplicateSection(index)}
                       onMove={moveSection}
                     />
                   );
