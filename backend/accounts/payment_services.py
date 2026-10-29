@@ -753,7 +753,15 @@ def paypal_activate_from_verified_subscription(tx, data):
     return True
 
 
-def paypal_suspend_subscription(subscription_id, reason='Cancelled by company administrator'):
+def paypal_pause_recurring_billing(subscription_id, reason='Paused by company administrator'):
+    """Pause PayPal renewals while preserving the customer's paid access locally.
+
+    PayPal's ``suspend`` endpoint pauses a subscription immediately and can be
+    reversed with ``activate``.  HRCloudPay keeps the already-paid period
+    available, then its normal subscription gate restricts access at
+    ``renews_at``.  Naming the operation after its provider-side effect avoids
+    presenting it as a future-dated cancellation that PayPal has not scheduled.
+    """
     subscription_id = str(subscription_id or '')
     if not subscription_id:
         raise RuntimeError('PayPal subscription ID is missing.')
@@ -761,7 +769,7 @@ def paypal_suspend_subscription(subscription_id, reason='Cancelled by company ad
         raise RuntimeError('Invalid PayPal subscription ID.')
     return _paypal_request(
         f'/v1/billing/subscriptions/{subscription_id}/suspend', 'POST',
-        {'reason': str(reason or 'Subscription cancellation scheduled')[:128]},
+        {'reason': str(reason or 'Recurring billing paused')[:128]},
         request_id=f'hcp-paypal-suspend-{uuid.uuid4().hex}',
     )
 

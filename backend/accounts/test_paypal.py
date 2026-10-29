@@ -429,19 +429,21 @@ class PayPalCancellationTests(TestCase):
         self.client = APIClient()
         self.client.force_authenticate(self.owner)
 
-    def test_cancellation_suspends_paypal_before_setting_local_flag(self):
+    def test_cancellation_pauses_paypal_recurring_billing_before_setting_local_flag(self):
         from accounts import payment_services
-        with patch.object(payment_services, 'paypal_suspend_subscription') as suspend:
+        with patch.object(payment_services, 'paypal_pause_recurring_billing') as pause:
             response = self.client.post('/api/auth/billing/cancel/', {'reason': 'No longer needed'}, format='json')
         self.assertEqual(response.status_code, 200, response.data)
-        suspend.assert_called_once_with('I-SUBSCRIPTION-1', 'No longer needed')
+        pause.assert_called_once_with('I-SUBSCRIPTION-1', 'No longer needed')
+        self.assertIn('paused', response.data['message'].lower())
+        self.assertEqual(response.data['subscription']['cancellation_mode'], 'paused')
         self.sub.refresh_from_db()
         self.assertTrue(self.sub.cancel_at_period_end)
         self.assertEqual(self.sub.status, 'active')
 
     def test_failed_paypal_cancellation_leaves_local_subscription_unchanged(self):
         from accounts import payment_services
-        with patch.object(payment_services, 'paypal_suspend_subscription', side_effect=RuntimeError('provider unavailable')):
+        with patch.object(payment_services, 'paypal_pause_recurring_billing', side_effect=RuntimeError('provider unavailable')):
             response = self.client.post('/api/auth/billing/cancel/', {}, format='json')
         self.assertEqual(response.status_code, 502)
         self.sub.refresh_from_db()

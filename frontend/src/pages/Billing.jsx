@@ -154,7 +154,10 @@ export default function Billing() {
   const planName = plans.find((p) => p.id === sub?.plan)?.name || sub?.plan || 'your plan';
   const periodEnd = sub?.renews_at ? new Date(sub.renews_at).toLocaleDateString() : '';
   const untilDate = periodEnd ? ` until ${periodEnd}` : '';
-  const cancelConfirmMessage = `Your team keeps full access${untilDate}, when the current billing period ends. You can change your mind any time before then.`;
+  const isPayPalPause = sub?.provider === 'paypal';
+  const cancelConfirmMessage = isPayPalPause
+    ? `PayPal recurring billing will be paused now. Your team keeps full access${untilDate}, when the current paid period ends. You can resume recurring billing any time before then.`
+    : `Your team keeps full access${untilDate}, when the current billing period ends. You can change your mind any time before then.`;
 
   return (
     <div className="page">
@@ -172,7 +175,7 @@ export default function Billing() {
         <div className="card"><span className="kpi-label">Next renewal</span><strong className="kpi-value">{sub?.renews_at ? new Date(sub.renews_at).toLocaleDateString() : '—'}</strong><small>{sub?.provider || '—'}</small></div>
       </div>
 
-      {sub?.cancel_at_period_end && <div className="billing-status-banner warning"><div><strong>Cancellation scheduled</strong><div>Your {planName} plan stays active{untilDate}. You can undo this any time before then.</div></div><button className="btn btn-primary" disabled={actionLoading} onClick={reactivateSubscription}>Keep my plan</button></div>}
+      {sub?.cancel_at_period_end && <div className="billing-status-banner warning"><div><strong>{isPayPalPause ? 'Recurring billing paused' : 'Cancellation scheduled'}</strong><div>{isPayPalPause ? `PayPal renewals are paused. Your ${planName} plan stays active${untilDate}.` : `Your ${planName} plan stays active${untilDate}. You can undo this any time before then.`}</div></div><button className="btn btn-primary" disabled={actionLoading} onClick={reactivateSubscription}>{isPayPalPause ? 'Resume recurring billing' : 'Keep my plan'}</button></div>}
       {state?.status === 'past_due' || state?.status === 'grace' ? <div className="billing-status-banner warning"><div><strong>Payment attention required</strong><div>{state?.reason || 'Your subscription needs payment attention.'}</div></div></div> : null}
       {data?.pending_reference && sub?.status !== 'active' ? <div className="billing-status-banner"><div><strong>{pendingProviderName} payment pending</strong><div>Complete the {pendingProviderName} approval to activate your plan. Already approved? Refresh your subscription status below.</div></div><button className="btn btn-secondary" disabled={actionLoading || !!paying} onClick={() => verifyPayment(data.pending_reference, '')}>Check payment status</button></div> : null}
 
@@ -200,7 +203,7 @@ export default function Billing() {
         </div>
       </section>
 
-      <section className="card"><div className="section-head"><div><h2>Subscription controls</h2><p>Cancelling keeps your team working until the end of the current billing period.</p></div><div className="billing-actions">{canReactivate && <button className="btn btn-primary" disabled={actionLoading} onClick={reactivateSubscription}>Keep my plan</button>}{canCancel && <button className="btn billing-danger" disabled={actionLoading} onClick={openCancelConfirm}>Cancel subscription</button>}</div></div>{sub?.cancellation_reason && <small className="muted-text">Recorded cancellation reason: {sub.cancellation_reason}</small>}</section>
+      <section className="card"><div className="section-head"><div><h2>Subscription controls</h2><p>{isPayPalPause ? 'Pausing PayPal renewal preserves your current paid access until the end of this billing period.' : 'Cancelling keeps your team working until the end of the current billing period.'}</p></div><div className="billing-actions">{canReactivate && <button className="btn btn-primary" disabled={actionLoading} onClick={reactivateSubscription}>{isPayPalPause ? 'Resume recurring billing' : 'Keep my plan'}</button>}{canCancel && <button className="btn billing-danger" disabled={actionLoading} onClick={openCancelConfirm}>{isPayPalPause ? 'Pause recurring billing' : 'Cancel subscription'}</button>}</div></div>{sub?.cancellation_reason && <small className="muted-text">Recorded cancellation reason: {sub.cancellation_reason}</small>}</section>
 
       <section className="card">
         <div className="section-head"><div><h2>Payment history</h2><p>Every checkout is recorded against your company subscription.</p></div></div>
