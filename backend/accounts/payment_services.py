@@ -1,9 +1,11 @@
 import json
+import base64
 import urllib.error
 import urllib.request
 import uuid
 from datetime import timedelta
 from decimal import Decimal
+from urllib.parse import urlencode
 
 from django.db import transaction
 from django.utils import timezone
@@ -49,7 +51,7 @@ def ensure_payment_plan(plan, billing_cycle, currency):
     amount = plan_amount(plan, billing_cycle)
     interval = 'monthly' if billing_cycle == 'monthly' else 'yearly'
     currency = str(currency or 'USD').upper()
-    row = PaymentPlan.objects.filter(provider='flutterwave', plan=plan, billing_cycle=billing_cycle, currency=currency).first()
+    row = PaymentPlan.objects.filter(provider='flutterwave', plan=plan, billing_cycle=billing_cycle, currency=currency, environment=config.environment).first()
     if row and row.external_plan_id:
         return row.external_plan_id
     response = _request('/payment-plans', 'POST', {
@@ -64,11 +66,11 @@ def ensure_payment_plan(plan, billing_cycle, currency):
     try:
         with transaction.atomic():
             row, _ = PaymentPlan.objects.update_or_create(
-                provider='flutterwave', plan=plan, billing_cycle=billing_cycle, currency=currency,
+                provider='flutterwave', plan=plan, billing_cycle=billing_cycle, currency=currency, environment=config.environment,
                 defaults={'external_plan_id': str(data['id']), 'amount': amount},
             )
     except Exception:
-        row = PaymentPlan.objects.filter(provider='flutterwave', plan=plan, billing_cycle=billing_cycle, currency=currency).first()
+        row = PaymentPlan.objects.filter(provider='flutterwave', plan=plan, billing_cycle=billing_cycle, currency=currency, environment=config.environment).first()
         if not row:
             raise
     return row.external_plan_id
@@ -284,7 +286,7 @@ def ensure_paddle_price(plan, billing_cycle='monthly', currency='USD'):
     config, secret, base_url = paddle_provider_config()
     amount = plan_amount(plan, billing_cycle)
     currency = str(currency or 'USD').upper()
-    row = PaymentPlan.objects.filter(provider='paddle', plan=plan, billing_cycle=billing_cycle, currency=currency).first()
+    row = PaymentPlan.objects.filter(provider='paddle', plan=plan, billing_cycle=billing_cycle, currency=currency, environment=config.environment).first()
     if row and row.external_plan_id:
         return row.external_plan_id, amount
     interval = 'month' if billing_cycle == 'monthly' else 'year'
@@ -303,11 +305,11 @@ def ensure_paddle_price(plan, billing_cycle='monthly', currency='USD'):
     try:
         with transaction.atomic():
             PaymentPlan.objects.update_or_create(
-                provider='paddle', plan=plan, billing_cycle=billing_cycle, currency=currency,
+                provider='paddle', plan=plan, billing_cycle=billing_cycle, currency=currency, environment=config.environment,
                 defaults={'external_plan_id': price_id, 'amount': amount},
             )
     except Exception:
-        if not PaymentPlan.objects.filter(provider='paddle', plan=plan, billing_cycle=billing_cycle, currency=currency).exists():
+        if not PaymentPlan.objects.filter(provider='paddle', plan=plan, billing_cycle=billing_cycle, currency=currency, environment=config.environment).exists():
             raise
     return price_id, amount
 
@@ -416,3 +418,626 @@ def paddle_activate_from_verified(tx, data):
             },
         )
     return True
+from django.utils.dateparse import parse_datetime
+
+
+# --- PayPal Subscriptions ------------------------------------------------------
+
+PAYPAL_BASES = {
+    'test': 'https://api-m.sandbox.paypal.com',
+    'live': 'https://api-m.paypal.com',
+}
+
+
+def paypal_provider_config():
+    config = PaymentProviderConfig.objects.filter(provider='paypal', enabled=True).first()
+    if not config:
+        raise RuntimeError('PayPal is not enabled by the platform administrator.')
+    client_id = clean_secret(config.public_key)
+    client_secret = clean_secret(decrypt_secret(config.encrypted_secret_key)) if config.encrypted_secret_key else ''
+    webhook_id = clean_secret(decrypt_secret(config.webhook_secret)) if config.webhook_secret else ''
+    missing = [name for name, value in (
+        ('client ID', client_id), ('client secret', client_secret), ('webhook ID', webhook_id),
+    ) if not value]
+    if missing:
+        raise RuntimeError('PayPal is enabled but missing its ' + ', '.join(missing) + '.')
+    environment = config.environment or 'test'
+    base_url = PAYPAL_BASES.get(environment)
+    if not base_url:
+        raise RuntimeError('PayPal environment must be test or live.')
+    return config, client_id, client_secret, base_url
+
+
+def _paypal_access_token(client_id, client_secret, base_url):
+    credentials = base64.b64encode(f'{clean_secret(client_id)}:{clean_secret(client_secret)}'.encode()).decode('ascii')
+    request = urllib.request.Request(
+        f'{base_url}/v1/oauth2/token',
+        data=urlencode({'grant_type': 'client_credentials'}).encode(),
+        headers={
+            'Authorization': f'Basic {credentials}',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json',
+        },
+        method='POST',
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            result = json.loads(response.read().decode())
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f'PayPal OAuth request failed (HTTP {exc.code}).') from None
+    token = result.get('access_token')
+    if not token:
+        raise RuntimeError('PayPal OAuth did not return an access token.')
+    return token
+
+
+def _paypal_request(path, method='GET', payload=None, request_id=''):
+    _, client_id, client_secret, base_url = paypal_provider_config()
+    access_token = _paypal_access_token(client_id, client_secret, base_url)
+    body = json.dumps(payload).encode() if payload is not None else None
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Prefer': 'return=representation',
+    }
+    if request_id:
+        headers['PayPal-Request-Id'] = str(request_id)[:100]
+    request = urllib.request.Request(f'{base_url}{path}', data=body, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            raw = response.read().decode()
+            return json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as exc:
+        # Provider response bodies can contain customer and account data. Do not
+        # echo them to users or persist them in logs; status is enough to diagnose
+        # the configuration/API class without leaking provider payloads.
+        raise RuntimeError(f'PayPal API request failed (HTTP {exc.code}).') from None
+
+
+def _paypal_product_id():
+    response = _paypal_request('/v1/catalogs/products?page_size=100&page=1')
+    for product in response.get('products') or []:
+        if product.get('name') == 'HRCloudPay subscription' and product.get('type') == 'SERVICE':
+            if product.get('id'):
+                return str(product['id'])
+    response = _paypal_request('/v1/catalogs/products', 'POST', {
+        'name': 'HRCloudPay subscription',
+        'description': 'HRCloudPay SaaS subscription',
+        'type': 'SERVICE',
+        'category': 'SOFTWARE',
+    }, request_id='hcp-paypal-product-v1')
+    product_id = str(response.get('id') or '')
+    if not product_id:
+        raise RuntimeError('PayPal did not return a product ID.')
+    return product_id
+
+
+def ensure_paypal_plan(plan, billing_cycle='monthly', currency='USD'):
+    config, _, _, _ = paypal_provider_config()
+    amount = plan_amount(plan, billing_cycle)
+    currency = str(currency or 'USD').upper()
+    if currency != 'USD':
+        raise RuntimeError('PayPal subscription billing currently supports USD only.')
+    row = PaymentPlan.objects.filter(
+        provider='paypal', plan=plan, billing_cycle=billing_cycle,
+        currency=currency, environment=config.environment,
+    ).first()
+    if row and row.external_plan_id and row.amount == amount:
+        return row.external_plan_id, amount
+
+    product_id = _paypal_product_id()
+    interval_unit = 'MONTH' if billing_cycle == 'monthly' else 'YEAR'
+    amount_key = str(amount).replace('.', '')
+    suffix = f'{config.environment}-{plan}-{billing_cycle}-{currency}-{amount_key}'
+    created = _paypal_request('/v1/billing/plans', 'POST', {
+        'product_id': product_id,
+        'name': f'HRCloudPay {plan.title()} {billing_cycle.title()}',
+        'description': f'{plan.title()} {billing_cycle} subscription',
+        'billing_cycles': [{
+            'frequency': {'interval_unit': interval_unit, 'interval_count': 1},
+            'tenure_type': 'REGULAR',
+            'sequence': 1,
+            'total_cycles': 0,
+            'pricing_scheme': {
+                'fixed_price': {'value': str(amount), 'currency_code': currency},
+            },
+        }],
+        'payment_preferences': {
+            'auto_bill_outstanding': True,
+            'payment_failure_threshold': 3,
+        },
+    }, request_id=f'hcp-paypal-plan-{suffix}')
+    plan_id = str(created.get('id') or '')
+    if not plan_id:
+        raise RuntimeError('PayPal did not return a subscription plan ID.')
+    if str(created.get('status') or '').upper() != 'ACTIVE':
+        _paypal_request(
+            f'/v1/billing/plans/{plan_id}/activate', 'POST',
+            {'reason': 'Activate HRCloudPay subscription plan'},
+            request_id=f'hcp-paypal-activate-{suffix}',
+        )
+    try:
+        with transaction.atomic():
+            PaymentPlan.objects.update_or_create(
+                provider='paypal', plan=plan, billing_cycle=billing_cycle,
+                currency=currency, environment=config.environment,
+                defaults={'external_plan_id': plan_id, 'amount': amount},
+            )
+    except Exception:
+        saved = PaymentPlan.objects.filter(
+            provider='paypal', plan=plan, billing_cycle=billing_cycle,
+            currency=currency, environment=config.environment,
+        ).first()
+        if not saved or saved.amount != amount:
+            raise
+        return saved.external_plan_id, saved.amount
+    return plan_id, amount
+
+
+def paypal_initialize_checkout(company, user, plan, billing_cycle='monthly', currency='USD'):
+    config, _, _, _ = paypal_provider_config()
+    currency = str(currency or 'USD').upper()
+    if currency != 'USD':
+        raise RuntimeError('PayPal subscription billing currently supports USD only.')
+    if billing_cycle not in ('monthly', 'annual'):
+        raise RuntimeError('Unsupported PayPal billing cycle.')
+    external_plan_id, amount = ensure_paypal_plan(plan, billing_cycle, currency)
+    reference = f'HCP-{uuid.uuid4().hex[:24].upper()}'
+    frontend_url = str(settings.FRONTEND_URL).rstrip('/')
+    response = _paypal_request('/v1/billing/subscriptions', 'POST', {
+        'plan_id': external_plan_id,
+        'custom_id': reference,
+        'application_context': {
+            'brand_name': 'HRCloudPay',
+            'user_action': 'SUBSCRIBE_NOW',
+            'shipping_preference': 'NO_SHIPPING',
+            'return_url': f'{frontend_url}/billing/success?provider=paypal&reference={reference}',
+            'cancel_url': f'{frontend_url}/billing?paypal_cancel=1&reference={reference}',
+        },
+    }, request_id=f'hcp-paypal-subscription-{reference}')
+    subscription_id = str(response.get('id') or '')
+    approval_url = next((
+        str(link.get('href') or '') for link in response.get('links') or []
+        if link.get('rel') in ('approve', 'payer-action') and link.get('href')
+    ), '')
+    if not subscription_id or not approval_url:
+        raise RuntimeError('PayPal did not return a subscription approval link.')
+    with transaction.atomic():
+        PaymentTransaction.objects.create(
+            company=company,
+            subscription=company.subscription,
+            provider='paypal',
+            reference=reference,
+            provider_transaction_id=subscription_id,
+            plan=plan,
+            billing_cycle=billing_cycle,
+            amount=amount,
+            currency=currency,
+            status='pending',
+            checkout_url=approval_url,
+            metadata={
+                'paypal_subscription_id': subscription_id,
+                'paypal_plan_id': external_plan_id,
+                'environment': config.environment,
+            },
+        )
+    return {
+        'reference': reference,
+        'checkout_url': approval_url,
+        'amount': str(amount),
+        'currency': currency,
+        'provider': 'paypal',
+    }
+
+
+def _paypal_parse_time(value):
+    if not value:
+        return None
+    parsed = parse_datetime(str(value))
+    if parsed and timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+    return parsed
+
+
+def _paypal_amount_and_currency(payment):
+    payment = payment or {}
+    amount = payment.get('amount') or payment
+    value = amount.get('value') if amount.get('value') is not None else amount.get('total')
+    currency = amount.get('currency_code') or amount.get('currency') or payment.get('currency_code') or payment.get('currency')
+    try:
+        decimal_amount = Decimal(str(value)).quantize(Decimal('0.01'))
+    except Exception:
+        return None, ''
+    return decimal_amount, str(currency or '').upper()
+
+
+def paypal_verify_subscription(subscription_id):
+    subscription_id = str(subscription_id or '')
+    if not subscription_id or len(subscription_id) > 150 or any(not (c.isalnum() or c == '-') for c in subscription_id):
+        raise RuntimeError('Invalid PayPal subscription ID.')
+    return _paypal_request(f'/v1/billing/subscriptions/{subscription_id}')
+
+
+def paypal_activate_from_verified_subscription(tx, data):
+    """Activate a local pending transaction only from a matching paid PayPal subscription."""
+    metadata = tx.metadata if isinstance(tx.metadata, dict) else {}
+    if tx.provider != 'paypal':
+        return False
+    config, _, _, _ = paypal_provider_config()
+    if metadata.get('environment') and metadata.get('environment') != config.environment:
+        return False
+    expected_subscription_id = str(metadata.get('paypal_subscription_id') or tx.provider_transaction_id or '')
+    subscription_id = str((data or {}).get('id') or '')
+    if not expected_subscription_id or subscription_id != expected_subscription_id:
+        return False
+    if tx.status == 'paid':
+        return True
+    if str((data or {}).get('custom_id') or '') != tx.reference:
+        return False
+    expected_plan_id = str(metadata.get('paypal_plan_id') or '')
+    if not expected_plan_id or str((data or {}).get('plan_id') or '') != expected_plan_id:
+        return False
+    if str((data or {}).get('status') or '').upper() != 'ACTIVE':
+        return False
+
+    billing_info = (data or {}).get('billing_info') or {}
+    last_payment = billing_info.get('last_payment') or {}
+    payment_status = str(last_payment.get('status') or '').upper()
+    if payment_status and payment_status not in ('COMPLETED', 'SUCCESS'):
+        return False
+    paid_amount, paid_currency = _paypal_amount_and_currency(last_payment)
+    if paid_amount is None or paid_currency != str(tx.currency or '').upper() or paid_amount != tx.amount.quantize(Decimal('0.01')):
+        return False
+    payment_time = _paypal_parse_time(last_payment.get('time')) or timezone.now()
+    next_billing_time = _paypal_parse_time(billing_info.get('next_billing_time'))
+    if not next_billing_time or next_billing_time <= payment_time:
+        return False
+
+    with transaction.atomic():
+        locked_tx = PaymentTransaction.objects.select_for_update().get(pk=tx.pk)
+        if locked_tx.status == 'paid':
+            return True
+        sub = Subscription.objects.select_for_update().get(pk=locked_tx.subscription_id)
+        now = timezone.now()
+        locked_tx.status = 'paid'
+        locked_tx.provider_transaction_id = subscription_id
+        locked_tx.paid_at = payment_time
+        locked_tx.metadata = {
+            **(locked_tx.metadata or {}),
+            'paypal_subscription_id': subscription_id,
+            'paypal_plan_id': expected_plan_id,
+            'paypal_initial_payment_time': payment_time.isoformat(),
+        }
+        locked_tx.save(update_fields=['status', 'provider_transaction_id', 'paid_at', 'metadata', 'updated_at'])
+
+        locked_tx.company.plan = locked_tx.plan
+        locked_tx.company.save(update_fields=['plan', 'updated_at'])
+        sub.status = 'active'
+        sub.provider = 'paypal'
+        sub.provider_plan_id = expected_plan_id
+        sub.external_subscription_id = subscription_id
+        subscriber = (data or {}).get('subscriber') or {}
+        sub.external_customer_id = str(subscriber.get('payer_id') or sub.external_customer_id or '')
+        sub.started_at = sub.started_at or payment_time
+        sub.current_period_start = payment_time
+        sub.current_period_end = next_billing_time
+        sub.renews_at = next_billing_time
+        sub.cancelled_at = None
+        sub.grace_ends_at = None
+        sub.trial_ends_at = None
+        sub.cancel_at_period_end = False
+        sub.cancellation_reason = ''
+        sub.last_payment_at = payment_time
+        sub.failed_payment_count = 0
+        sub.monthly_price = locked_tx.amount if locked_tx.billing_cycle == 'monthly' else (locked_tx.amount / Decimal('10')).quantize(Decimal('0.01'))
+        sub.currency = locked_tx.currency
+        sub.save()
+        BillingInvoice.objects.update_or_create(
+            transaction=locked_tx,
+            defaults={
+                'company': locked_tx.company,
+                'subscription': sub,
+                'number': f'INV-{payment_time.strftime("%Y%m%d")}-{locked_tx.reference[-10:]}',
+                'plan': locked_tx.plan,
+                'billing_cycle': locked_tx.billing_cycle,
+                'amount': locked_tx.amount,
+                'currency': locked_tx.currency,
+                'status': 'paid',
+                'paid_at': payment_time,
+                'period_start': payment_time,
+                'period_end': next_billing_time,
+                'metadata': {'provider': 'paypal', 'provider_transaction_id': subscription_id},
+            },
+        )
+    return True
+
+
+def paypal_suspend_subscription(subscription_id, reason='Cancelled by company administrator'):
+    subscription_id = str(subscription_id or '')
+    if not subscription_id:
+        raise RuntimeError('PayPal subscription ID is missing.')
+    if len(subscription_id) > 150 or any(not (c.isalnum() or c == '-') for c in subscription_id):
+        raise RuntimeError('Invalid PayPal subscription ID.')
+    return _paypal_request(
+        f'/v1/billing/subscriptions/{subscription_id}/suspend', 'POST',
+        {'reason': str(reason or 'Subscription cancellation scheduled')[:128]},
+        request_id=f'hcp-paypal-suspend-{uuid.uuid4().hex}',
+    )
+
+
+def paypal_reactivate_subscription(subscription_id):
+    subscription_id = str(subscription_id or '')
+    if not subscription_id:
+        raise RuntimeError('PayPal subscription ID is missing.')
+    if len(subscription_id) > 150 or any(not (c.isalnum() or c == '-') for c in subscription_id):
+        raise RuntimeError('Invalid PayPal subscription ID.')
+    return _paypal_request(
+        f'/v1/billing/subscriptions/{subscription_id}/activate', 'POST',
+        {'reason': 'Company administrator removed scheduled cancellation'},
+        request_id=f'hcp-paypal-reactivate-{uuid.uuid4().hex}',
+    )
+
+
+def verify_paypal_webhook_signature(config, headers, event):
+    webhook_id = clean_secret(decrypt_secret(config.webhook_secret)) if config.webhook_secret else ''
+    if not webhook_id:
+        return False
+    paypal_headers = {
+        'auth_algo': headers.get('PAYPAL-AUTH-ALGO') or '',
+        'cert_url': headers.get('PAYPAL-CERT-URL') or '',
+        'transmission_id': headers.get('PAYPAL-TRANSMISSION-ID') or '',
+        'transmission_sig': headers.get('PAYPAL-TRANSMISSION-SIG') or '',
+        'transmission_time': headers.get('PAYPAL-TRANSMISSION-TIME') or '',
+    }
+    if not all(paypal_headers.values()):
+        return False
+    response = _paypal_request('/v1/notifications/verify-webhook-signature', 'POST', {
+        **paypal_headers,
+        'webhook_id': webhook_id,
+        'webhook_event': event,
+    })
+    return str(response.get('verification_status') or '').upper() == 'SUCCESS'
+
+
+def _paypal_subscription_for_event(subscription_id):
+    subscription_id = str(subscription_id or '')
+    if not subscription_id:
+        return None
+    return Subscription.objects.filter(
+        provider='paypal', external_subscription_id=subscription_id,
+    ).select_related('company').first()
+
+
+def _paypal_period_for_payment(sub, payment_time, provider_subscription):
+    billing_info = (provider_subscription or {}).get('billing_info') or {}
+    last_payment = billing_info.get('last_payment') or {}
+    provider_last_payment_time = _paypal_parse_time(last_payment.get('time'))
+    next_billing_time = _paypal_parse_time(billing_info.get('next_billing_time'))
+    # Provider timestamps are authoritative when this webhook describes the
+    # subscription's current last payment. Older, delayed events must not use a
+    # later cycle's next_billing_time or move the company's period backwards.
+    if (provider_last_payment_time and next_billing_time
+            and abs((provider_last_payment_time - payment_time).total_seconds()) <= 3600
+            and next_billing_time > payment_time):
+        return payment_time, next_billing_time, True
+    period = timedelta(days=30 if sub.billing_cycle == 'monthly' else 365)
+    return payment_time, payment_time + period, False
+
+
+def _paypal_link_initial_sale(tx, sale_id, payment_time):
+    """Attach the initial sale ID to the checkout transaction without extending it twice."""
+    metadata = tx.metadata if isinstance(tx.metadata, dict) else {}
+    if metadata.get('paypal_initial_sale_id') == sale_id:
+        return True
+    initial_time = _paypal_parse_time(metadata.get('paypal_initial_payment_time')) or tx.paid_at
+    if not initial_time or abs((initial_time - payment_time).total_seconds()) > 48 * 3600:
+        return False
+    if PaymentTransaction.objects.filter(provider='paypal', provider_transaction_id=sale_id).exclude(pk=tx.pk).exists():
+        return True
+    tx.provider_transaction_id = sale_id
+    tx.metadata = {**metadata, 'paypal_subscription_id': metadata.get('paypal_subscription_id') or tx.subscription.external_subscription_id, 'paypal_initial_sale_id': sale_id}
+    tx.save(update_fields=['provider_transaction_id', 'metadata', 'updated_at'])
+    invoice = BillingInvoice.objects.filter(transaction=tx).first()
+    if invoice:
+        invoice.metadata = {**(invoice.metadata or {}), 'provider_transaction_id': sale_id}
+        invoice.save(update_fields=['metadata'])
+    return True
+
+
+def _paypal_process_completed_sale(resource, event_id):
+    sale_id = str((resource or {}).get('id') or '')
+    subscription_id = str((resource or {}).get('billing_agreement_id') or (resource or {}).get('subscription_id') or '')
+    if not sale_id or not subscription_id:
+        return False
+    payment_time = _paypal_parse_time((resource or {}).get('create_time')) or timezone.now()
+    existing_sale = PaymentTransaction.objects.filter(provider='paypal', provider_transaction_id=sale_id).first()
+    if existing_sale:
+        return existing_sale.status == 'paid'
+
+    initial_tx = PaymentTransaction.objects.filter(
+        provider='paypal', provider_transaction_id=subscription_id,
+    ).select_related('subscription', 'company').first()
+    if initial_tx and initial_tx.status == 'pending':
+        verified_subscription = paypal_verify_subscription(subscription_id)
+        if not paypal_activate_from_verified_subscription(initial_tx, verified_subscription):
+            return False
+        initial_tx.refresh_from_db()
+        return _paypal_link_initial_sale(initial_tx, sale_id, payment_time)
+    if initial_tx and initial_tx.status == 'paid':
+        if _paypal_link_initial_sale(initial_tx, sale_id, payment_time):
+            return True
+
+    sub = _paypal_subscription_for_event(subscription_id)
+    if not sub:
+        return False
+    provider_subscription = paypal_verify_subscription(subscription_id)
+    if str(provider_subscription.get('id') or '') != subscription_id:
+        return False
+    if str(provider_subscription.get('plan_id') or '') != str(sub.provider_plan_id or ''):
+        return False
+    if str(provider_subscription.get('status') or '').upper() not in ('ACTIVE', 'SUSPENDED', 'CANCELLED'):
+        return False
+
+    paid_amount, paid_currency = _paypal_amount_and_currency(resource)
+    expected_amount = sub.monthly_price if sub.billing_cycle == 'monthly' else (sub.monthly_price * Decimal('10')).quantize(Decimal('0.01'))
+    if paid_amount is None or paid_amount != expected_amount.quantize(Decimal('0.01')) or paid_currency != str(sub.currency or '').upper():
+        return False
+
+    with transaction.atomic():
+        locked_sub = Subscription.objects.select_for_update().select_related('company').get(pk=sub.pk)
+        existing_sale = PaymentTransaction.objects.select_for_update().filter(
+            provider='paypal', provider_transaction_id=sale_id,
+        ).first()
+        if existing_sale:
+            return existing_sale.status == 'paid'
+        reference = f'HCP-PAYPAL-{sale_id}'
+        tx = PaymentTransaction.objects.create(
+            company=locked_sub.company,
+            subscription=locked_sub,
+            provider='paypal',
+            reference=reference,
+            provider_transaction_id=sale_id,
+            plan=locked_sub.company.plan,
+            billing_cycle=locked_sub.billing_cycle,
+            amount=paid_amount,
+            currency=paid_currency,
+            status='paid',
+            paid_at=payment_time,
+            metadata={
+                'recurring': True,
+                'paypal_subscription_id': subscription_id,
+                'paypal_event_id': event_id,
+            },
+        )
+        period_start, period_end, authoritative = _paypal_period_for_payment(locked_sub, payment_time, provider_subscription)
+        if not authoritative and locked_sub.last_payment_at and payment_time < locked_sub.last_payment_at:
+            # The invoice remains recorded, but an older delayed event cannot
+            # roll the active subscription period back.
+            pass
+        else:
+            locked_sub.status = 'active'
+            locked_sub.current_period_start = period_start
+            locked_sub.current_period_end = period_end
+            locked_sub.renews_at = period_end
+            locked_sub.last_payment_at = payment_time
+            locked_sub.grace_ends_at = None
+            locked_sub.failed_payment_count = 0
+            locked_sub.save(update_fields=[
+                'status', 'current_period_start', 'current_period_end', 'renews_at',
+                'last_payment_at', 'grace_ends_at', 'failed_payment_count', 'updated_at',
+            ])
+        BillingInvoice.objects.create(
+            company=locked_sub.company,
+            subscription=locked_sub,
+            transaction=tx,
+            number=f'INV-{payment_time.strftime("%Y%m%d")}-{reference[-10:]}',
+            plan=locked_sub.company.plan,
+            billing_cycle=locked_sub.billing_cycle,
+            amount=paid_amount,
+            currency=paid_currency,
+            status='paid',
+            paid_at=payment_time,
+            period_start=period_start,
+            period_end=period_end,
+            metadata={'provider': 'paypal', 'provider_transaction_id': sale_id},
+        )
+    return True
+
+
+def _paypal_mark_payment_failed(subscription_id, event_time=None):
+    sub = _paypal_subscription_for_event(subscription_id)
+    if not sub:
+        pending = PaymentTransaction.objects.filter(
+            provider='paypal', provider_transaction_id=subscription_id, status='pending',
+        ).select_related('subscription').first()
+        if pending:
+            pending.status = 'failed'
+            pending.save(update_fields=['status', 'updated_at'])
+            return True
+        return False
+    failed_at = _paypal_parse_time(event_time)
+    if failed_at and sub.last_payment_at and sub.last_payment_at >= failed_at:
+        return True
+    provider_data = paypal_verify_subscription(subscription_id)
+    if str(provider_data.get('id') or '') != subscription_id:
+        return False
+    provider_status = str(provider_data.get('status') or '').upper()
+    if provider_status in ('CANCELLED', 'EXPIRED'):
+        return True
+    billing_info = provider_data.get('billing_info') or {}
+    last_payment = billing_info.get('last_payment') or {}
+    provider_last_payment_at = _paypal_parse_time(last_payment.get('time'))
+    if failed_at and provider_last_payment_at and provider_last_payment_at >= failed_at:
+        return True
+    if (not failed_at and sub.last_payment_at and provider_last_payment_at
+            and provider_last_payment_at > sub.last_payment_at):
+        return True
+    sub.status = 'past_due'
+    sub.grace_ends_at = timezone.now() + timedelta(days=7)
+    sub.failed_payment_count = (sub.failed_payment_count or 0) + 1
+    sub.save(update_fields=['status', 'grace_ends_at', 'failed_payment_count', 'updated_at'])
+    return True
+
+
+def _paypal_sync_subscription_status(subscription_id, event_type):
+    sub = _paypal_subscription_for_event(subscription_id)
+    if not sub:
+        return False
+    provider_data = paypal_verify_subscription(subscription_id)
+    if str(provider_data.get('id') or '') != subscription_id:
+        return False
+    status = str(provider_data.get('status') or '').upper()
+    if status == 'ACTIVE':
+        # Do not activate an unpaid checkout from a status notification alone.
+        if sub.status in ('active', 'past_due') and sub.provider == 'paypal':
+            sub.status = 'active'
+            sub.grace_ends_at = None
+            sub.failed_payment_count = 0
+            sub.save(update_fields=['status', 'grace_ends_at', 'failed_payment_count', 'updated_at'])
+        return sub.status == 'active'
+    if status == 'SUSPENDED':
+        if sub.cancel_at_period_end:
+            return True
+        sub.status = 'past_due'
+        sub.grace_ends_at = timezone.now() + timedelta(days=7)
+        sub.save(update_fields=['status', 'grace_ends_at', 'updated_at'])
+        return True
+    if status in ('CANCELLED', 'EXPIRED'):
+        sub.status = 'cancelled' if status == 'CANCELLED' else 'expired'
+        sub.cancel_at_period_end = False
+        sub.cancelled_at = sub.cancelled_at or timezone.now()
+        sub.grace_ends_at = sub.current_period_end or sub.renews_at
+        sub.save(update_fields=['status', 'cancel_at_period_end', 'cancelled_at', 'grace_ends_at', 'updated_at'])
+        return True
+    return False
+
+
+def process_paypal_webhook_event(event_type, resource, event_id='', event_time=None):
+    event_type = str(event_type or '').upper()
+    resource = resource or {}
+    if event_type == 'PAYMENT.SALE.COMPLETED':
+        return _paypal_process_completed_sale(resource, event_id)
+    if event_type == 'BILLING.SUBSCRIPTION.PAYMENT.FAILED':
+        subscription_id = str(resource.get('billing_agreement_id') or resource.get('subscription_id') or resource.get('id') or '')
+    else:
+        subscription_id = str(resource.get('id') or resource.get('billing_agreement_id') or resource.get('subscription_id') or '')
+    if event_type in ('BILLING.SUBSCRIPTION.ACTIVATED', 'BILLING.SUBSCRIPTION.RE-ACTIVATED'):
+        pending = PaymentTransaction.objects.filter(
+            provider='paypal', provider_transaction_id=subscription_id, status='pending',
+        ).select_related('subscription').first()
+        if pending:
+            verified_subscription = paypal_verify_subscription(subscription_id)
+            return paypal_activate_from_verified_subscription(pending, verified_subscription)
+        return _paypal_sync_subscription_status(subscription_id, event_type)
+    if event_type in ('BILLING.SUBSCRIPTION.PAYMENT.FAILED', 'BILLING.SUBSCRIPTION.SUSPENDED'):
+        if event_type == 'BILLING.SUBSCRIPTION.SUSPENDED':
+            sub = _paypal_subscription_for_event(subscription_id)
+            if sub and sub.cancel_at_period_end:
+                return True
+        return _paypal_mark_payment_failed(subscription_id, event_time)
+    if event_type == 'BILLING.SUBSCRIPTION.CANCELLED':
+        return _paypal_sync_subscription_status(subscription_id, event_type)
+    if event_type == 'BILLING.SUBSCRIPTION.EXPIRED':
+        return _paypal_sync_subscription_status(subscription_id, event_type)
+    return None

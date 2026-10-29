@@ -542,19 +542,29 @@ class PlatformPaymentProvidersView(APIView):
         rows=[]
         for p,label in PaymentProviderConfig.PROVIDERS:
             obj=PaymentProviderConfig.objects.filter(provider=p).first()
-            rows.append({'provider':p,'name':label,'enabled':bool(obj and obj.enabled),'environment':obj.environment if obj else 'test','public_key':obj.public_key if obj else '','has_secret':bool(obj and obj.encrypted_secret_key),'has_webhook_secret':bool(obj and obj.webhook_secret),'configured_at':obj.configured_at if obj else None})
+            row={'provider':p,'name':label,'enabled':bool(obj and obj.enabled),'environment':obj.environment if obj else 'test','public_key':obj.public_key if obj else '','has_secret':bool(obj and obj.encrypted_secret_key),'has_webhook_secret':bool(obj and obj.webhook_secret),'configured_at':obj.configured_at if obj else None}
+            if p == 'paypal':
+                row['webhook_url'] = request.build_absolute_uri(reverse('payment-webhook', kwargs={'provider': 'paypal'}))
+            rows.append(row)
         return Response(rows)
     def post(self, request):
         provider=request.data.get('provider')
         if provider not in dict(PaymentProviderConfig.PROVIDERS): return Response({'detail':'Unsupported payment provider.'},status=400)
         obj,_=PaymentProviderConfig.objects.get_or_create(provider=provider)
         for f in ('enabled','environment','public_key'):
-            if f in request.data: setattr(obj,f,request.data[f])
+            if f in request.data:
+                value = clean_secret(request.data[f]) if f == 'public_key' else request.data[f]
+                setattr(obj,f,value)
         if 'secret_key' in request.data and request.data['secret_key']:
             obj.encrypted_secret_key=encrypt_secret(clean_secret(request.data['secret_key']))
         if 'webhook_secret' in request.data and request.data['webhook_secret']:
             obj.webhook_secret=encrypt_secret(clean_secret(request.data['webhook_secret']))
         if request.data.get('enabled') and not obj.encrypted_secret_key: return Response({'detail':'A secret/API key is required before enabling this provider.'},status=400)
+        if provider == 'paypal' and request.data.get('enabled'):
+            if not obj.public_key:
+                return Response({'detail':'A PayPal REST client ID is required before enabling this provider.'},status=400)
+            if not obj.webhook_secret:
+                return Response({'detail':'A PayPal webhook ID is required for recurring billing before enabling this provider.'},status=400)
         obj.configured_at=timezone.now(); obj.save()
         audit(request.user,'security',f"Updated {obj.get_provider_display()} payment provider settings",None,'payment_provider',obj.id,{'enabled':obj.enabled,'environment':obj.environment})
         return Response({'message':'Payment provider settings saved.','provider':provider,'enabled':obj.enabled,'has_secret':bool(obj.encrypted_secret_key)})
@@ -566,6 +576,11 @@ class PlatformPaymentProviderToggleView(APIView):
         obj=get_object_or_404(PaymentProviderConfig,provider=provider)
         enabled=bool(request.data.get('enabled'))
         if enabled and not obj.encrypted_secret_key: return Response({'detail':'Configure an API secret before enabling this provider.'},status=400)
+        if enabled and provider == 'paypal':
+            if not obj.public_key:
+                return Response({'detail':'Configure the PayPal REST client ID before enabling this provider.'},status=400)
+            if not obj.webhook_secret:
+                return Response({'detail':'Configure the PayPal webhook ID before enabling recurring billing.'},status=400)
         obj.enabled=enabled; obj.save(update_fields=['enabled','updated_at'])
         audit(request.user,'security',f"{'Enabled' if enabled else 'Disabled'} {obj.get_provider_display()} payments",None,'payment_provider',obj.id,{'enabled':enabled})
         return Response({'enabled':obj.enabled})
@@ -657,12 +672,39 @@ class PaymentWebhookView(APIView):
         elif provider == 'paddle':
             if not _verify_paddle_webhook(config, raw, request.headers):
                 return Response({'detail':'Invalid Paddle webhook signature.'},status=401)
+        elif provider == 'paypal':
+            try:
+                from .payment_services import verify_paypal_webhook_signature
+                verified = verify_paypal_webhook_signature(config, request.headers, request.data)
+            except Exception:
+                verified = False
+            if not verified:
+                return Response({'detail':'Invalid PayPal webhook signature.'},status=401)
         event_type = request.data.get('event') or request.data.get('type') or request.data.get('event_type') or ''
-        data = request.data.get('data') or {}
-        event_id = str(request.data.get('webhook_id') or request.data.get('event_id') or request.headers.get('X-Event-ID') or data.get('id') or uuid.uuid4().hex)
-        event, created = PaymentEvent.objects.get_or_create(event_id=event_id, defaults={'provider':provider,'event_type':event_type,'payload':request.data})
-        if not created:
+        data = request.data.get('resource') or request.data.get('data') or {}
+        if provider == 'paypal':
+            paypal_event_id = str(request.data.get('id') or request.data.get('event_id') or request.headers.get('X-Event-ID') or '')
+            if not paypal_event_id:
+                return Response({'detail':'PayPal webhook event ID is missing.'},status=400)
+            event_id = f'paypal:{paypal_event_id}'
+            resource_payload = request.data.get('resource') or {}
+            event_payload = {
+                'id': paypal_event_id,
+                'event_type': event_type,
+                'resource': {key: resource_payload[key] for key in (
+                    'id', 'status', 'plan_id', 'custom_id', 'billing_agreement_id',
+                    'subscription_id', 'amount', 'create_time',
+                ) if key in resource_payload},
+            }
+        else:
+            event_id = str(request.data.get('webhook_id') or request.data.get('event_id') or request.headers.get('X-Event-ID') or data.get('id') or uuid.uuid4().hex)
+            event_payload = request.data
+        event, created = PaymentEvent.objects.get_or_create(event_id=event_id, defaults={'provider':provider,'event_type':event_type,'payload':event_payload})
+        if not created and event.status == 'processed':
             return Response({'received':True,'duplicate':True})
+        if not created:
+            event.event_type = event_type
+            event.payload = event_payload
         if provider == 'flutterwave':
             tx_ref = data.get('tx_ref')
             tx = PaymentTransaction.objects.filter(reference=tx_ref).first() if tx_ref else None
@@ -785,6 +827,16 @@ class PaymentWebhookView(APIView):
                     sub.cancel_at_period_end = False
                     sub.save(update_fields=['status', 'cancelled_at', 'cancel_at_period_end', 'updated_at'])
                     event.status = 'processed'
+        if provider == 'paypal':
+            try:
+                from .payment_services import process_paypal_webhook_event
+                processed = process_paypal_webhook_event(event_type, data, event_id, request.data.get('create_time'))
+                event.status = 'processed' if processed is True else ('received' if processed is None else 'verification_failed')
+            except Exception as exc:
+                event.status = 'verification_failed'
+                event.payload = {**event_payload, '_error': str(exc)[:300]}
+                event.save(update_fields=['status','payload'])
+                return Response({'detail':'PayPal webhook processing is temporarily unavailable.'},status=503)
         event.save(update_fields=['status','payload'])
         return Response({'received':True})
 
@@ -797,6 +849,14 @@ class CompanyBillingCancelView(APIView):
         if not sub: return Response({'detail': 'No subscription is configured.'}, status=400)
         if sub.status in ('cancelled','expired'): return Response({'detail': 'Subscription is already cancelled.'}, status=400)
         reason = str(request.data.get('reason') or 'Cancelled by company administrator')[:255]
+        if sub.provider == 'paypal':
+            if not sub.external_subscription_id:
+                return Response({'detail':'PayPal subscription ID is missing; cancellation was not scheduled.'},status=409)
+            try:
+                from .payment_services import paypal_suspend_subscription
+                paypal_suspend_subscription(sub.external_subscription_id, reason)
+            except Exception as exc:
+                return Response({'detail':f'PayPal could not suspend recurring billing: {exc}'},status=502)
         sub.cancel_at_period_end = True
         sub.cancellation_reason = reason
         sub.save(update_fields=['cancel_at_period_end','cancellation_reason','updated_at'])
@@ -811,6 +871,14 @@ class CompanyBillingReactivateView(APIView):
         sub = getattr(company, 'subscription', None)
         if not sub: return Response({'detail': 'No subscription is configured.'}, status=400)
         if not sub.cancel_at_period_end: return Response({'message':'Subscription is already set to continue.','cancel_at_period_end':False})
+        if sub.provider == 'paypal':
+            if not sub.external_subscription_id:
+                return Response({'detail':'PayPal subscription ID is missing; the subscription cannot be reactivated.'},status=409)
+            try:
+                from .payment_services import paypal_reactivate_subscription
+                paypal_reactivate_subscription(sub.external_subscription_id)
+            except Exception as exc:
+                return Response({'detail':f'PayPal could not reactivate recurring billing: {exc}'},status=502)
         sub.cancel_at_period_end = False
         sub.cancellation_reason = ''
         sub.save(update_fields=['cancel_at_period_end','cancellation_reason','updated_at'])
@@ -840,8 +908,37 @@ class CompanyBillingView(APIView):
         if not company: return Response({'detail':'No company is attached to this account.'}, status=400)
         sub=getattr(company,'subscription',None)
         txs=PaymentTransaction.objects.filter(company=company)[:20]
-        pending = PaymentTransaction.objects.filter(company=company, provider='paddle', status='pending').order_by('-created_at').first()
-        return Response({'state':subscription_state(company),'pending_reference':pending.reference if pending else None,'subscription':{'id':sub.id,'plan':company.plan,'status':sub.status,'provider':sub.provider,'billing_cycle':sub.billing_cycle,'monthly_price':str(sub.monthly_price),'currency':sub.currency,'renews_at':sub.renews_at,'trial_ends_at':sub.trial_ends_at,'grace_ends_at':sub.grace_ends_at,'current_period_start':sub.current_period_start,'current_period_end':sub.current_period_end,'cancel_at_period_end':sub.cancel_at_period_end,'cancellation_reason':sub.cancellation_reason,'last_payment_at':sub.last_payment_at,'failed_payment_count':sub.failed_payment_count} if sub else None,'transactions':[{'reference':x.reference,'plan':x.plan,'billing_cycle':x.billing_cycle,'amount':str(x.amount),'currency':x.currency,'status':x.status,'created_at':x.created_at,'paid_at':x.paid_at} for x in txs]})
+        pending = PaymentTransaction.objects.filter(company=company, provider__in=('paddle', 'paypal'), status='pending').order_by('-created_at').first()
+        checkout_configured = {
+            'paddle': PaymentProviderConfig.objects.filter(provider='paddle', enabled=True).exists(),
+            'flutterwave': PaymentProviderConfig.objects.filter(provider='flutterwave', enabled=True).exists(),
+            'paypal': PaymentProviderConfig.objects.filter(provider='paypal', enabled=True, public_key__gt='', encrypted_secret_key__gt='', webhook_secret__gt='').exists(),
+        }
+        provider_labels = [('paddle', 'Paddle'), ('flutterwave', 'Flutterwave'), ('paypal', 'PayPal (card or PayPal)')]
+        available_providers = [{'provider': key, 'name': label} for key, label in provider_labels if checkout_configured[key]]
+        default_provider = next((key for key in ('paddle', 'flutterwave', 'paypal') if checkout_configured[key]), '')
+        return Response({
+            'state': subscription_state(company),
+            'pending_reference': pending.reference if pending else None,
+            'pending_provider': pending.provider if pending else None,
+            'available_providers': available_providers,
+            'default_checkout_provider': default_provider,
+            'subscription': {
+                'id': sub.id, 'plan': company.plan, 'status': sub.status, 'provider': sub.provider,
+                'billing_cycle': sub.billing_cycle, 'monthly_price': str(sub.monthly_price),
+                'currency': sub.currency, 'renews_at': sub.renews_at, 'trial_ends_at': sub.trial_ends_at,
+                'grace_ends_at': sub.grace_ends_at, 'current_period_start': sub.current_period_start,
+                'current_period_end': sub.current_period_end, 'cancel_at_period_end': sub.cancel_at_period_end,
+                'cancellation_reason': sub.cancellation_reason, 'last_payment_at': sub.last_payment_at,
+                'failed_payment_count': sub.failed_payment_count,
+            } if sub else None,
+            'transactions': [
+                {'reference': x.reference, 'provider': x.provider, 'plan': x.plan,
+                 'billing_cycle': x.billing_cycle, 'amount': str(x.amount), 'currency': x.currency,
+                 'status': x.status, 'created_at': x.created_at, 'paid_at': x.paid_at}
+                for x in txs
+            ],
+        })
 
 
 class CompanyBillingCheckoutView(APIView):
@@ -864,26 +961,35 @@ class CompanyBillingCheckoutView(APIView):
         provider = str(request.data.get('provider') or '').lower()
         paddle_enabled = PaymentProviderConfig.objects.filter(provider='paddle', enabled=True).exists()
         flw_enabled = PaymentProviderConfig.objects.filter(provider='flutterwave', enabled=True).exists()
+        paypal_enabled = PaymentProviderConfig.objects.filter(provider='paypal', enabled=True, public_key__gt='', encrypted_secret_key__gt='', webhook_secret__gt='').exists()
         if provider:
-            if provider not in ('paddle', 'flutterwave'):
+            if provider not in ('paddle', 'flutterwave', 'paypal'):
                 return Response({'detail':'Unsupported payment provider.'},status=400)
             if provider == 'paddle' and not paddle_enabled:
                 return Response({'detail':'Paddle is not enabled by the platform administrator.'},status=400)
             if provider == 'flutterwave' and not flw_enabled:
                 return Response({'detail':'Flutterwave is not enabled by the platform administrator.'},status=400)
+            if provider == 'paypal' and not paypal_enabled:
+                return Response({'detail':'PayPal recurring billing is not fully configured by the platform administrator.'},status=400)
         else:
-            # When the platform enables Paddle it becomes the default checkout
-            # provider; otherwise the existing Flutterwave behaviour is kept.
-            provider = 'paddle' if paddle_enabled else ('flutterwave' if flw_enabled else '')
+            # Preserve the existing Paddle/Flutterwave preference, then fall
+            # back to PayPal when it is the only configured recurring provider.
+            provider = 'paddle' if paddle_enabled else ('flutterwave' if flw_enabled else ('paypal' if paypal_enabled else ''))
             if not provider:
                 return Response({'detail':'No payment provider is enabled.'},status=400)
+        currency = str(request.data.get('currency') or 'USD').upper()
+        if provider == 'paypal' and currency != 'USD':
+            return Response({'detail':'PayPal subscription billing currently supports USD only.'},status=400)
         try:
             if provider == 'paddle':
                 from .payment_services import paddle_initialize_checkout
-                result = paddle_initialize_checkout(company, request.user, plan, cycle, request.data.get('currency') or 'USD')
+                result = paddle_initialize_checkout(company, request.user, plan, cycle, currency)
+            elif provider == 'paypal':
+                from .payment_services import paypal_initialize_checkout
+                result = paypal_initialize_checkout(company, request.user, plan, cycle, currency)
             else:
                 from .payment_services import initialize_checkout
-                result = initialize_checkout(company, request.user, plan, cycle, request.data.get('currency') or 'USD')
+                result = initialize_checkout(company, request.user, plan, cycle, currency)
             result['provider'] = provider
         except Exception as exc:
             return Response({'detail':str(exc)},status=502)
@@ -897,16 +1003,21 @@ class CompanyBillingVerifyView(APIView):
         transaction_id=request.data.get('transaction_id')
         tx=PaymentTransaction.objects.filter(reference=reference, company=request.user.company).first()
         if not tx: return Response({'detail':'Payment transaction not found.'},status=404)
-        # Paddle's hosted checkout returns to the success page without query
-        # parameters; fall back to the transaction id captured at creation.
+        # Hosted providers can return without a local transaction identifier;
+        # use only the provider ID persisted with this company-scoped reference.
         if not transaction_id:
-            transaction_id = tx.provider_transaction_id or ''
+            transaction_id = (tx.metadata or {}).get('paypal_subscription_id') if tx.provider == 'paypal' else tx.provider_transaction_id
+            transaction_id = transaction_id or tx.provider_transaction_id or ''
         if not transaction_id: return Response({'detail':'transaction_id is required.'},status=400)
         try:
             if tx.provider == 'paddle':
                 from .payment_services import paddle_verify_transaction, paddle_activate_from_verified
                 data=paddle_verify_transaction(transaction_id)
                 ok=paddle_activate_from_verified(tx,data)
+            elif tx.provider == 'paypal':
+                from .payment_services import paypal_verify_subscription, paypal_activate_from_verified_subscription
+                data=paypal_verify_subscription(transaction_id)
+                ok=paypal_activate_from_verified_subscription(tx,data)
             else:
                 from .payment_services import verify_transaction, activate_from_verified_payment
                 data=verify_transaction(transaction_id)

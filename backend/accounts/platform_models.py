@@ -116,7 +116,7 @@ class Subscription(models.Model):
                       ('cancelled', 'Cancelled'), ('grace', 'Grace'), ('expired', 'Expired')]
     CYCLES = [('monthly', 'Monthly'), ('annual', 'Annual')]
     PROVIDERS = [('manual', 'Manual'), ('flutterwave', 'Flutterwave'), ('paystack', 'Paystack'),
-                 ('stripe', 'Stripe'), ('paddle', 'Paddle')]
+                 ('stripe', 'Stripe'), ('paddle', 'Paddle'), ('paypal', 'PayPal')]
 
     company = models.OneToOneField('Company', on_delete=models.CASCADE, related_name='subscription')
     plan = models.CharField(max_length=20, default='starter')
@@ -195,7 +195,7 @@ class SupportTicket(models.Model):
 
 
 class PaymentProviderConfig(models.Model):
-    PROVIDERS = [('flutterwave', 'Flutterwave'), ('paystack', 'Paystack'), ('stripe', 'Stripe'), ('paddle', 'Paddle')]
+    PROVIDERS = [('flutterwave', 'Flutterwave'), ('paystack', 'Paystack'), ('stripe', 'Stripe'), ('paddle', 'Paddle'), ('paypal', 'PayPal')]
     ENVIRONMENTS = [('test', 'Test'), ('live', 'Live')]
     provider = models.CharField(max_length=30, choices=PROVIDERS, unique=True)
     enabled = models.BooleanField(default=False)
@@ -218,13 +218,14 @@ class PaymentPlan(models.Model):
     plan = models.CharField(max_length=20)
     billing_cycle = models.CharField(max_length=10)
     currency = models.CharField(max_length=10)
+    environment = models.CharField(max_length=10, default='test')
     external_plan_id = models.CharField(max_length=150)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = [('provider', 'plan', 'billing_cycle', 'currency')]
+        unique_together = [('provider', 'plan', 'billing_cycle', 'currency', 'environment')]
 
 
 class PaymentEvent(models.Model):
@@ -283,6 +284,13 @@ class PaymentTransaction(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['provider', 'provider_transaction_id'],
+                condition=models.Q(provider='paypal') & ~models.Q(provider_transaction_id=''),
+                name='unique_payment_provider_transaction_id',
+            ),
+        ]
 
 
 class BillingInvoice(models.Model):

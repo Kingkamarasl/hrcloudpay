@@ -26,6 +26,7 @@ export default function Billing() {
   const [invoices, setInvoices] = useState([]);
   const [actionLoading, setActionLoading] = useState(false);
   const [confirming, setConfirming] = useState('');
+  const [selectedProvider, setSelectedProvider] = useState('');
   const [searchParams] = useSearchParams();
   const requestedPlan = searchParams.get('plan');
 
@@ -34,6 +35,11 @@ export default function Billing() {
     try {
       const [billing, available, invoiceRows] = await Promise.all([api.get('/auth/billing/'), api.get('/auth/billing/plans/'), api.get('/auth/billing/invoices/')]);
       setData(billing); setPlans(available); setInvoices(invoiceRows || []);
+      setSelectedProvider((current) => (
+        billing.available_providers?.some((item) => item.provider === current)
+          ? current
+          : (billing.default_checkout_provider || '')
+      ));
     } catch (err) { setError(err.message || 'Unable to load billing.'); }
     finally { setLoading(false); }
   }
@@ -58,15 +64,34 @@ export default function Billing() {
   }
 
   useEffect(() => {
-    const reference = searchParams.get('tx_ref');
+    if (searchParams.get('paypal_cancel') === '1') {
+      sessionStorage.removeItem('hrcloudpay.pending_paypal_reference');
+      setMessage('PayPal checkout was cancelled; no subscription was started.');
+      return;
+    }
+    const provider = searchParams.get('provider');
+    const reference = searchParams.get('reference');
+    const paypalSubscriptionId = searchParams.get('subscription_id');
+    if (provider === 'paypal' && reference) {
+      sessionStorage.removeItem('hrcloudpay.pending_paypal_reference');
+      verifyPayment(reference, paypalSubscriptionId || '');
+      return;
+    }
+    const referenceFromGateway = searchParams.get('tx_ref');
     const transactionId = searchParams.get('transaction_id');
-    if (reference && transactionId) { verifyPayment(reference, transactionId); return; }
+    if (referenceFromGateway && transactionId) { verifyPayment(referenceFromGateway, transactionId); return; }
     // Paddle's hosted checkout redirects back to /billing/success without
     // query parameters; the reference saved before the redirect lets us verify.
     const pending = sessionStorage.getItem('hrcloudpay.pending_paddle_reference');
     if (pending && !reference) {
       sessionStorage.removeItem('hrcloudpay.pending_paddle_reference');
       verifyPayment(pending, '');
+      return;
+    }
+    const paypalPending = sessionStorage.getItem('hrcloudpay.pending_paypal_reference');
+    if (paypalPending && !referenceFromGateway) {
+      sessionStorage.removeItem('hrcloudpay.pending_paypal_reference');
+      verifyPayment(paypalPending, '');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
@@ -78,10 +103,8 @@ export default function Billing() {
     finally { setActionLoading(false); }
   }
 
-  // Both endpoints only flip flags on the local Subscription row and never branch
-  // on sub.provider, so they behave identically for every enabled provider
-  // (paddle, flutterwave, manual). No provider argument is sent and none is read.
-  // Cancel posts no body: CompanyBillingCancelView applies its own default reason.
+  // PayPal is remotely suspended/reactivated by these endpoints; other providers
+  // continue to use the existing local cancellation behavior.
   const cancelSubscription = () => billingAction('/auth/billing/cancel/');
   const reactivateSubscription = () => billingAction('/auth/billing/reactivate/');
 
@@ -98,9 +121,14 @@ export default function Billing() {
     if (plan === 'enterprise') return;
     setError(''); setMessage(''); setPaying(plan);
     try {
-      const result = await api.post('/auth/billing/checkout/', { plan, billing_cycle: billingCycle, currency: 'USD' });
+      const provider = selectedProvider || data?.default_checkout_provider || '';
+      if (!provider) throw new Error('No payment provider is configured. Contact your platform administrator.');
+      const result = await api.post('/auth/billing/checkout/', { plan, billing_cycle: billingCycle, currency: 'USD', provider });
       if (result.provider === 'paddle' && result.reference) {
         sessionStorage.setItem('hrcloudpay.pending_paddle_reference', result.reference);
+      }
+      if (result.provider === 'paypal' && result.reference) {
+        sessionStorage.setItem('hrcloudpay.pending_paypal_reference', result.reference);
       }
       window.location.href = result.checkout_url;
     } catch (err) { setError(err.message || 'Unable to start checkout.'); setPaying(''); }
@@ -110,6 +138,8 @@ export default function Billing() {
 
   const sub = data?.subscription;
   const state = data?.state;
+  const checkoutProviders = data?.available_providers || [];
+  const pendingProviderName = data?.pending_provider === 'paypal' ? 'PayPal' : 'Paddle';
   const currentIndex = PLAN_ORDER.indexOf(sub?.plan);
 
   // Cancel is offered only while the backend will accept it, i.e. a subscription
@@ -144,20 +174,27 @@ export default function Billing() {
 
       {sub?.cancel_at_period_end && <div className="billing-status-banner warning"><div><strong>Cancellation scheduled</strong><div>Your {planName} plan stays active{untilDate}. You can undo this any time before then.</div></div><button className="btn btn-primary" disabled={actionLoading} onClick={reactivateSubscription}>Keep my plan</button></div>}
       {state?.status === 'past_due' || state?.status === 'grace' ? <div className="billing-status-banner warning"><div><strong>Payment attention required</strong><div>{state?.reason || 'Your subscription needs payment attention.'}</div></div></div> : null}
-      {data?.pending_reference && sub?.status !== 'active' ? <div className="billing-status-banner"><div><strong>Paddle payment pending</strong><div>Complete the Paddle checkout to activate your plan. Already paid? Refresh your subscription status below.</div></div><button className="btn btn-secondary" disabled={actionLoading || !!paying} onClick={() => verifyPayment(data.pending_reference, '')}>Check payment status</button></div> : null}
+      {data?.pending_reference && sub?.status !== 'active' ? <div className="billing-status-banner"><div><strong>{pendingProviderName} payment pending</strong><div>Complete the {pendingProviderName} approval to activate your plan. Already approved? Refresh your subscription status below.</div></div><button className="btn btn-secondary" disabled={actionLoading || !!paying} onClick={() => verifyPayment(data.pending_reference, '')}>Check payment status</button></div> : null}
 
       <section className="billing-plans">
         <div className="section-head"><div><div className="eyebrow">UPGRADE OR RENEW</div><h2>Choose your plan</h2></div><div className="billing-cycle-toggle"><button className={billingCycle === 'monthly' ? 'active' : ''} onClick={() => setBillingCycle('monthly')}>Monthly</button><button className={billingCycle === 'annual' ? 'active' : ''} onClick={() => setBillingCycle('annual')}>Annual · Save 2 months</button></div></div>
+        {checkoutProviders.length > 0 ? <div className="card" style={{ marginBottom: 16 }}>
+          <div className="section-head"><div><h3>Payment method</h3><p>Choose a gateway for recurring subscription billing.</p></div>
+            <div className="billing-cycle-toggle">{checkoutProviders.map((item) => <button key={item.provider} className={selectedProvider === item.provider ? 'active' : ''} onClick={() => setSelectedProvider(item.provider)}>{item.name}</button>)}</div>
+          </div>
+          {selectedProvider === 'paypal' && <small className="muted-text">PayPal hosts the approval flow. Credit/debit-card and guest checkout options depend on PayPal merchant eligibility, country, and account settings.</small>}
+        </div> : <div className="billing-status-banner warning"><div><strong>No payment gateway is available</strong><div>Contact your platform administrator to configure recurring billing.</div></div></div>}
         <div className="pricing-grid">
           {sortPlans(plans).map((plan) => {
             const current = plan.id === sub?.plan;
+            const currentActive = current && !!state?.allowed;
             const lower = isDowngradeFrom(sub?.plan, plan.id);
             return <div className={`pricing-card${plan.id === 'professional' || plan.id === 'scale' ? ' pricing-card-highlight' : ''}`} key={plan.id}>
               <h3>{plan.name}</h3>
               <div className="pricing-amount">{plan.id === 'enterprise' ? 'Custom' : `$${billingCycle === 'annual' ? plan.annual_price : plan.monthly_price}`}<span className="pricing-period">{plan.id === 'enterprise' ? '' : billingCycle === 'annual' ? '/year' : '/month'}</span></div>
               <p className="pricing-blurb">{plan.employee_limit ? `Up to ${plan.employee_limit} employees` : 'Unlimited employees'}</p>
               <ul className="pricing-features"><li>{plan.user_limit ? `${plan.user_limit} active users` : 'Unlimited users'}</li><li>HR + payroll operations</li><li>Secure payment & subscription management</li></ul>
-              {plan.id === 'enterprise' ? <a className="btn btn-secondary" href={SALES_MAILTO}>Contact sales</a> : <button className="btn btn-primary" disabled={paying || current || lower} onClick={() => checkout(plan.id)}>{current ? 'Current plan' : lower ? 'Downgrade in portal' : paying === plan.id ? 'Opening checkout...' : 'Choose plan & pay'}</button>}
+              {plan.id === 'enterprise' ? <a className="btn btn-secondary" href={SALES_MAILTO}>Contact sales</a> : <button className="btn btn-primary" disabled={paying || currentActive || lower || !checkoutProviders.length} onClick={() => checkout(plan.id)}>{currentActive ? 'Current plan' : lower ? 'Downgrade in portal' : paying === plan.id ? 'Opening checkout...' : current ? 'Renew plan' : 'Choose plan & pay'}</button>}
             </div>;
           })}
         </div>
