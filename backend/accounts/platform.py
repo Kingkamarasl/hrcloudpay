@@ -849,19 +849,24 @@ class CompanyBillingCancelView(APIView):
         if not sub: return Response({'detail': 'No subscription is configured.'}, status=400)
         if sub.status in ('cancelled','expired'): return Response({'detail': 'Subscription is already cancelled.'}, status=400)
         reason = str(request.data.get('reason') or 'Cancelled by company administrator')[:255]
+        cancellation_mode = 'scheduled'
         if sub.provider == 'paypal':
             if not sub.external_subscription_id:
                 return Response({'detail':'PayPal subscription ID is missing; cancellation was not scheduled.'},status=409)
             try:
-                from .payment_services import paypal_suspend_subscription
-                paypal_suspend_subscription(sub.external_subscription_id, reason)
+                from .payment_services import paypal_pause_recurring_billing
+                paypal_pause_recurring_billing(sub.external_subscription_id, reason)
             except Exception as exc:
-                return Response({'detail':f'PayPal could not suspend recurring billing: {exc}'},status=502)
+                return Response({'detail':f'PayPal could not pause recurring billing: {exc}'},status=502)
+            cancellation_mode = 'paused'
         sub.cancel_at_period_end = True
         sub.cancellation_reason = reason
         sub.save(update_fields=['cancel_at_period_end','cancellation_reason','updated_at'])
-        audit(request.user, 'account_status', f'Scheduled subscription cancellation for {company.name}', company, 'subscription', sub.id, {'reason': reason, 'renews_at': sub.renews_at})
-        return Response({'message':'Cancellation scheduled. Your plan stays active until the end of the current billing period.','subscription': {'cancel_at_period_end': sub.cancel_at_period_end, 'renews_at': sub.renews_at}})
+        audit(request.user, 'account_status', f'Paused recurring billing for {company.name}' if cancellation_mode == 'paused' else f'Scheduled subscription cancellation for {company.name}', company, 'subscription', sub.id, {'reason': reason, 'renews_at': sub.renews_at, 'cancellation_mode': cancellation_mode})
+        message = ('Recurring PayPal billing is paused. Your plan stays active until the end of the current billing period.'
+                   if cancellation_mode == 'paused' else
+                   'Cancellation scheduled. Your plan stays active until the end of the current billing period.')
+        return Response({'message': message, 'subscription': {'cancel_at_period_end': sub.cancel_at_period_end, 'renews_at': sub.renews_at, 'cancellation_mode': cancellation_mode}})
 
 
 class CompanyBillingReactivateView(APIView):

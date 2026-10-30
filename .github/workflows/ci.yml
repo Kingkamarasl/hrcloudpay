@@ -6,6 +6,15 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+# A newer push makes the older run irrelevant.  Cancelling it frees the hosted
+# runner and gives reviewers the result for the commit they can actually merge.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   backend-tests:
     runs-on: ubuntu-latest
@@ -134,6 +143,11 @@ jobs:
           cd frontend
           npm run test:run
 
+      - name: Audit production frontend dependencies
+        run: |
+          cd frontend
+          npm audit --omit=dev --audit-level=high
+
       - name: Build
         run: |
           cd frontend
@@ -151,23 +165,18 @@ jobs:
 
       - name: Install security tools
         run: |
-          pip install bandit safety
+          pip install bandit pip-audit
 
-      # Advisory on the first pass. Both tools exit non-zero on *any* finding,
-      # so wiring them in as hard gates means the very first run is red and
-      # stays red until every finding is triaged by hand - which trains people to
-      # ignore a red build. These report; they do not block. Tighten to
-      # `bandit -r . -ll` (medium+) or a pinned-requirements `safety check` once
-      # the current findings have been triaged and a policy written down.
-      - name: Run Bandit
-        continue-on-error: true
+      # High-severity static-analysis findings are a merge blocker.  Lower
+      # severities remain visible to local scanners without turning known,
+      # reviewed framework patterns into permanent red builds.
+      - name: Block high-severity Python security findings
         run: |
           cd backend
-          bandit -r . -f json -o bandit-report.json
-          bandit -r .
+          bandit -r . -lll
 
-      - name: Run Safety check
-        continue-on-error: true
+      # pip-audit resolves the declared requirements and fails when a published
+      # vulnerability has a known fix, making dependency risk actionable in CI.
+      - name: Audit Python dependencies
         run: |
-          cd backend
-          safety check
+          pip-audit -r backend/requirements.txt
